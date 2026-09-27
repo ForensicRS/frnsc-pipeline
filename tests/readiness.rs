@@ -36,6 +36,7 @@ fn parsers_with_fixtures_are_pipeline_ready() {
         "windows.ntfs.usnjrnl",
         "windows.ntfs.sds",
         "windows.registry.feature_usage",
+        "windows.prefetch",
     ] {
         let p = matrix.parsers.iter().find(|p| p.parser == id).unwrap();
         for c in &p.checks {
@@ -52,7 +53,7 @@ fn report_lists_parsers_and_gaps() {
     for (_, p) in catalog.parsers() {
         assert!(md.contains(&format!("`{}`", p.descriptor().id)));
     }
-    for gap in ["frnsc-prefetch", "frnsc-winevt", "frnsc-esedb"] {
+    for gap in ["frnsc-winevt", "frnsc-esedb"] {
         assert!(md.contains(gap), "{gap} missing from the report");
     }
     let json = serde_json::to_value(&matrix).unwrap();

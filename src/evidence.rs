@@ -13,12 +13,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use forensic_rs::prelude::*;
-use frnsc_hive::reader::{open_hive_with_logs, HiveRegistryReader};
+use frnsc_hive::reader::HiveRegistryReader;
 
 use crate::catalog::Catalog;
 
-/// Where a Windows system volume keeps its machine hives.
-const CONFIG_DIR: &str = r"C:\Windows\System32\Config";
 /// How many container hops an image may take before a volume (split -> media -> partition).
 const MAX_DEPTH: usize = 4;
 
@@ -265,38 +263,13 @@ fn source(
     }
 }
 
-/// Builds a `Registry` from the machine hives and the users' `NTUSER.DAT` on `fs`, keeping the
-/// reader's integrity findings (which `HiveRegistryReader::from_fs` has no way to return).
-/// `None` when the source holds no machine hive.
+/// Builds a `Registry` from the machine hives and the users' `NTUSER.DAT` on `fs`, with the
+/// reader's integrity findings. `None` when the source holds no machine hive. A source not laid
+/// out like a Windows volume (a triage collection) is searched by hive name
+/// ([`HiveRegistryReader::load_from_fs`]).
 pub fn registry_from(fs: &Arc<dyn FileSystem>) -> (Option<Arc<dyn Registry>>, Vec<Finding>) {
-    let config = FPath::new(CONFIG_DIR);
-    let mut findings = Vec::new();
-    let mut reader = HiveRegistryReader::new();
-    let mut any = false;
-    if let Some(h) = open_hive_with_logs(fs, config, "SYSTEM", &mut findings) {
-        reader.set_system(h);
-        any = true;
-    }
-    if let Some(h) = open_hive_with_logs(fs, config, "SOFTWARE", &mut findings) {
-        reader.set_software(h);
-        any = true;
-    }
-    if let Some(h) = open_hive_with_logs(fs, config, "SECURITY", &mut findings) {
-        reader.set_security(h);
-        any = true;
-    }
-    if let Some(h) = open_hive_with_logs(fs, config, "SAM", &mut findings) {
-        reader.set_sam(h);
-        any = true;
-    }
-    if !any {
-        return (None, findings);
-    }
-    if let Err(e) = reader.load_user_hives(fs) {
-        findings.push(Finding::from_error("loading user hives", &e));
-    }
-    findings.extend(reader.findings());
-    (Some(Arc::new(reader)), findings)
+    let (reader, findings) = HiveRegistryReader::load_from_fs(fs);
+    (reader.map(|r| Arc::new(r) as Arc<dyn Registry>), findings)
 }
 
 /// The last two components of a folder (`kape/C`): short, and still tells two collections apart.

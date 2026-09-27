@@ -67,10 +67,7 @@ fn serial_run_writes_a_deterministic_timeline() {
         .parsers_skipped
         .contains(&"windows.registry.feature_usage".to_string()));
     assert!(s.records > 0);
-    assert!(summary
-        .gaps
-        .iter()
-        .any(|g| g.crate_name == "frnsc-prefetch"));
+    assert!(summary.gaps.iter().any(|g| g.crate_name == "frnsc-winevt"));
 
     let timeline = read(a.path(), "timeline.jsonl");
     // The deleted tool is in the timeline, graded as deleted metadata.

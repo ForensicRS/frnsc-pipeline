@@ -109,6 +109,56 @@ fn collection_folder_runs_every_file_parser() {
     assert!(count("\"mft_entry\"") > 0);
 }
 
+/// The same samples laid out like a Brimor Labs triage collection: nothing where a Windows
+/// volume keeps it, hives and `$MFT` found by name.
+#[test]
+fn triage_collection_layout_is_found_by_name() {
+    let Samples {
+        mft,
+        system,
+        amcache,
+        history: _,
+    } = collection_samples!();
+    let tmp = TempDir::new("real-triage");
+    let root = tmp.path().join("collection");
+    place(&root, "HOST/CopiedFiles/registry/SYSTEM", &system);
+    place(&root, "HOST/CopiedFiles/Amcache.hve", &amcache);
+    place(&root, "HOST/CopiedFiles/ntfs/$MFT.bin", &mft);
+    let catalog = Catalog::standard();
+    let ev = evidence::open(&root, &catalog, None).unwrap();
+    assert_eq!(ev.sources.len(), 1);
+    assert!(
+        ev.sources[0].registry.is_some(),
+        "SYSTEM should be found by name"
+    );
+
+    let out = tmp.path().join("out");
+    let summary = run(
+        &ev,
+        &catalog,
+        &RunOptions {
+            out_dir: out.clone(),
+            host: "SAMPLES".into(),
+            parallel: false,
+            workers: None,
+        },
+    )
+    .unwrap();
+    let s = &summary.sources[0];
+    for id in ["windows.ntfs.mft", "windows.amcache"] {
+        assert!(
+            s.parsers_run.iter().any(|p| p == id),
+            "{id} did not run: {:?}",
+            s.parsers_skipped
+        );
+    }
+    let timeline = std::fs::read_to_string(out.join(&s.dir).join("timeline.jsonl")).unwrap();
+    assert!(timeline
+        .lines()
+        .any(|l| l.contains("\"InventoryApplicationFile\"")));
+    assert!(timeline.lines().any(|l| l.contains("\"mft_entry\"")));
+}
+
 #[test]
 fn bare_ntfs_volume_image_is_one_source() {
     let volume = artifact_or_skip!("ntfs-mkntfs-volume");

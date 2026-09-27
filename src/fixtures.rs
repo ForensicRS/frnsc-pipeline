@@ -179,13 +179,40 @@ pub fn feature_usage_registry() -> TestingRegistry {
     reg
 }
 
-/// Loose NTFS metadata files, as a triage tool exports them: `$MFT`, `$J`, a `$I30` and `$SDS`.
+/// Loose NTFS metadata files, as a triage tool exports them: `$MFT`, `$J`, a `$I30` and `$SDS`,
+/// plus two prefetch files.
 pub fn loose_ntfs() -> InMemoryVirtualFileSystem {
     InMemoryVirtualFileSystem::new()
         .with_file("C/$MFT", loose_mft())
         .with_file("C/$Extend/$UsnJrnl%3A$J", usn_journal())
         .with_file("C/Temp/$I30", i30())
         .with_file("C/$Secure%3A$SDS", sds())
+        .with_file(
+            "C/Windows/Prefetch/MIMI.EXE-0A1B2C3D.pf",
+            prefetch_v17("MIMI.EXE", 0x0A1B_2C3D, T, 3),
+        )
+        .with_file(
+            "C/Windows/Prefetch/CMD.EXE-4A81B364.pf",
+            prefetch_v17("CMD.EXE", 0x4A81_B364, T + 3_600 * 10_000_000, 12),
+        )
+}
+
+/// A minimal Windows XP (v17) prefetch file: header, executable name and hash, one run time and
+/// the run count, with no metrics, trace chains or volumes.
+pub fn prefetch_v17(name: &str, hash: u32, last_run: u64, run_count: u32) -> Vec<u8> {
+    let mut b = vec![0u8; 84 + 68];
+    let len = b.len() as u32;
+    b[0..4].copy_from_slice(&17u32.to_le_bytes());
+    b[4..8].copy_from_slice(b"SCCA");
+    b[12..16].copy_from_slice(&len.to_le_bytes());
+    for (i, u) in name.encode_utf16().take(29).enumerate() {
+        b[16 + 2 * i..18 + 2 * i].copy_from_slice(&u.to_le_bytes());
+    }
+    b[76..80].copy_from_slice(&hash.to_le_bytes());
+    // File information, right after the 84-byte header.
+    b[84 + 36..84 + 44].copy_from_slice(&last_run.to_le_bytes());
+    b[84 + 60..84 + 64].copy_from_slice(&run_count.to_le_bytes());
+    b
 }
 
 const TEMP: FileRef = FileRef::new(40, 1);
@@ -328,4 +355,24 @@ fn noise_seeded(n: usize, seed: u64) -> Vec<u8> {
             x as u8
         })
         .collect()
+}
+
+#[cfg(test)]
+mod prefetch_fixture_tests {
+    use forensic_rs::prelude::FileSystem;
+
+    #[test]
+    fn the_synthetic_prefetch_file_parses_cleanly() {
+        let bytes = super::prefetch_v17("MIMI.EXE", 0x0A1B_2C3D, super::T, 3);
+        let file = forensic_rs::prelude::testing::InMemoryVirtualFileSystem::new()
+            .with_file("x.pf", bytes)
+            .open(forensic_rs::prelude::FPath::new("x.pf"))
+            .unwrap();
+        let pf =
+            frnsc_prefetch::prefetch::read_prefetch_file("MIMI.EXE-0A1B2C3D.pf", file).unwrap();
+        assert_eq!(pf.name, "MIMI.EXE");
+        assert_eq!(pf.run_count, 3);
+        assert_eq!(pf.last_run_times[0].filetime(), super::T);
+        assert!(pf.anomalies.is_empty(), "{:?}", pf.anomalies);
+    }
 }

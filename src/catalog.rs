@@ -105,6 +105,7 @@ impl Catalog {
                 frnsc_winreg_activity::feature_usage::FeatureUsageParserFactory::new(),
             ),
             CatalogEntry::parser("frnsc-sqlite", frnsc_sqlite::artifacts::parser::BrowserHistoryParserFactory::new()),
+            CatalogEntry::parser("frnsc-prefetch", frnsc_prefetch::parser::PrefetchParserFactory::new()),
             // Formats that yield a FileSystem: these are what images, partitions and embedded
             // containers are opened with.
             CatalogEntry::format("forensic-rs", SplitRawFactory::new()),
@@ -126,14 +127,6 @@ impl Catalog {
                 },
             },
             // Gaps.
-            CatalogEntry {
-                crate_name: "frnsc-prefetch",
-                component: Component::Gap {
-                    artifact: "Prefetch",
-                    reason: "no ArtifactParserFactory: only read_prefetch_form_fs / read_prefetch_file \
-                             functions, and anomalies go to log lines instead of Anomalies",
-                },
-            },
             CatalogEntry {
                 crate_name: "frnsc-esedb",
                 component: Component::Gap {
