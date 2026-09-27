@@ -1,0 +1,39 @@
+[package]
+name = "frnsc-pipeline"
+version = "0.14.0"
+authors = ["ForensicRS contributors"]
+keywords = ["forensic", "windows", "pipeline", "cybersecurity"]
+categories = ["command-line-utilities"]
+description = "End-to-end ForensicRS pipeline and parser pipeline-readiness benchmark"
+license = "MIT"
+edition = "2021"
+repository = "https://github.com/ForensicRS/frnsc-pipeline"
+# Test artifacts are fetched by forensic-testenv, never committed or published.
+exclude = ["/artifacts"]
+
+[dependencies]
+forensic-rs = "0.14"
+# Parser factories.
+frnsc-amcache = "0.14"
+frnsc-sqlite = "0.1"
+frnsc-winreg-activity = "0.14"
+# Format factories and backends.
+frnsc-hive = "0.14"
+frnsc-esedb = "0.3"
+frnsc-winevt = "0.1"
+frnsc-ole = "0.1"
+# Listed in the catalog as a gap (no parser factory yet); depended on so the catalog notices
+# when it gains one.
+frnsc-prefetch = "0.14"
+# No published repo yet: sibling path dependencies, like frnsc-ntfs -> frnsc-vsys.
+frnsc-ntfs = { path = "../frnsc-ntfs", features = ["volume"] }
+frnsc-vsys = { path = "../frnsc-vsys" }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+# Resolved by the forensic-bootstrap workspace. When this crate gets its own CI outside the
+# workspace, switch to the git form (the workspace patches it back to the local copy):
+#   forensic-testdata = { git = "https://github.com/ForensicRS/forensic-testenv" }
+forensic-testdata = { workspace = true }
