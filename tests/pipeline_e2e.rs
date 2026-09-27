@@ -92,6 +92,8 @@ fn parallel_run_yields_the_same_records() {
     let serial = run(&disk(), &catalog, &opts(s.path(), false)).unwrap();
     let parallel = run(&disk(), &catalog, &opts(p.path(), true)).unwrap();
     assert_eq!(serial.sources[0].records, parallel.sources[0].records);
+    // Both pipelines finalize analyzers once per run, so they report the same findings.
+    assert_eq!(serial.sources[0].findings, parallel.sources[0].findings);
 
     // Provenance ids depend on completion order; the records themselves must not.
     let records = |dir: &std::path::Path| {

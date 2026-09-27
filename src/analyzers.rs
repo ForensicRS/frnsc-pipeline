@@ -16,9 +16,10 @@ const AMCACHE_FILE_PATH: &str = "amcache.application_file.path";
 /// A file Amcache knows about, on this volume, that the `$MFT` holds only as a deleted entry
 /// (or not at all) is worth a look: tools are often deleted after use.
 ///
-/// The pipeline calls `finalize` after every parser, not once per run, so this analyzer only
-/// reports once both sides have been seen, and reports each path at most once. Paths on other
-/// drives than `C:` are counted but never reported: this volume cannot answer for them.
+/// Reports in `finalize`, which both pipelines call once, after every parser. When the run had no
+/// Amcache or no `$MFT` at all it stays silent: with one side missing, every Amcache path would be
+/// "absent from the `$MFT`". Paths on other drives than `C:` are counted but never reported: this
+/// volume cannot answer for them.
 #[derive(Default)]
 pub struct ExecutionCorrelator {
     /// Normalized path -> raw Amcache path, for files on the system drive.
@@ -28,7 +29,6 @@ pub struct ExecutionCorrelator {
     other_drive: u64,
     mft_seen: bool,
     amcache_seen: bool,
-    reported: bool,
 }
 
 impl ExecutionCorrelator {
@@ -87,10 +87,9 @@ impl Analyzer for ExecutionCorrelator {
     }
 
     fn finalize(&mut self, _ctx: &TriageContext, out: &mut Vec<Finding>) -> ForensicResult<()> {
-        if self.reported || !(self.mft_seen && self.amcache_seen) {
+        if !(self.mft_seen && self.amcache_seen) {
             return Ok(());
         }
-        self.reported = true;
         for (norm, amcache_raw) in &self.executed {
             let (title, description, mft_raw) = match self.on_volume.get(norm) {
                 Some((_, true)) => continue,
@@ -180,8 +179,6 @@ mod tests {
             a.analyze(r, &ctx, &mut out).unwrap();
         }
         a.finalize(&ctx, &mut out).unwrap();
-        // A second finalize (after the next parser) must not repeat the findings.
-        a.finalize(&ctx, &mut out).unwrap();
         out
     }
 
@@ -228,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn silent_until_both_sides_are_seen() {
+    fn silent_when_one_side_is_missing() {
         assert!(correlate(&[amcache(r"c:\tools\gone.exe")]).is_empty());
         assert!(correlate(&[mft(r"\x.exe", &[], false)]).is_empty());
     }
