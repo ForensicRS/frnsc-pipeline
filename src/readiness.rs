@@ -140,7 +140,7 @@ fn check_parser(
 ) -> Vec<CheckResult> {
     let mut checks = vec![
         descriptor(parser, ids),
-        requirements(parser.descriptor(), &frnsc_artifacts::CATALOG),
+        requirements(parser.descriptor(), corpora),
     ];
 
     // One observed run per corpus; the record-hungry checks reuse it as their baseline.
@@ -209,9 +209,70 @@ fn descriptor(parser: &Arc<dyn ArtifactParserFactory>, ids: &[String]) -> CheckR
 /// name the run's catalog cannot resolve would find no evidence and say nothing about it, which
 /// is exactly the silent failure this benchmark exists to surface.
 ///
+/// Run against every corpus's own catalog, not a catalog of this function's choosing: the check
+/// is about what the run can resolve, so reading anything other than `corpus.sources.catalog()`
+/// would let it pass while the run itself resolves nothing. A corpus carrying no catalog at all
+/// is that same failure, and fails here.
+///
 /// `Skip` when the parser declares no artifact requirement — nothing was checked, and the
 /// report says so instead of showing a pass it did not earn.
-pub fn requirements(descriptor: &ParserDescriptor, kb: &dyn ArtifactCatalog) -> CheckResult {
+pub fn requirements(descriptor: &ParserDescriptor, corpora: &[Corpus]) -> CheckResult {
+    let declared: Vec<&str> = kb::artifact_requirements(descriptor).collect();
+    if declared.is_empty() {
+        return CheckResult::new(
+            "requirements",
+            Outcome::Skip,
+            "declares no artifact definition",
+        );
+    }
+    if corpora.is_empty() {
+        return CheckResult::new(
+            "requirements",
+            Outcome::Skip,
+            "no corpus to resolve against",
+        );
+    }
+    // One problem per corpus, in corpus order, so the report names which run cannot resolve what.
+    let mut problems = Vec::new();
+    for corpus in corpora {
+        match corpus.sources.catalog() {
+            None => problems.push(format!(
+                "{}: carries no artifact catalog, so none of the {} declared definition(s) resolve",
+                corpus.name,
+                declared.len()
+            )),
+            Some(kb) => {
+                let unknown = kb::unknown_artifact_requirements(descriptor, kb.as_ref());
+                if !unknown.is_empty() {
+                    problems.push(format!(
+                        "{}: {} of {} declared definition(s) are not in the catalog: {}",
+                        corpus.name,
+                        unknown.len(),
+                        declared.len(),
+                        unknown.join(", ")
+                    ));
+                }
+            }
+        }
+    }
+    if problems.is_empty() {
+        CheckResult::new(
+            "requirements",
+            Outcome::Pass,
+            format!(
+                "{} definition(s) in the catalog of all {} corpus/corpora",
+                declared.len(),
+                corpora.len()
+            ),
+        )
+    } else {
+        CheckResult::new("requirements", Outcome::Fail, problems.join("; "))
+    }
+}
+
+/// [`requirements`] against a single catalog, for callers that hold one directly rather than a
+/// corpus (the unit tests, and any caller checking a descriptor before a run exists).
+pub fn requirements_in(descriptor: &ParserDescriptor, kb: &dyn ArtifactCatalog) -> CheckResult {
     let declared: Vec<&str> = kb::artifact_requirements(descriptor).collect();
     if declared.is_empty() {
         return CheckResult::new(

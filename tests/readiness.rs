@@ -61,7 +61,7 @@ fn a_requirement_the_catalog_does_not_have_fails() {
             Requirement::artifact("WindowsAMCacheHveFile"),
             Requirement::artifact("WindowsNotADefinition"),
         ]);
-    let result = readiness::requirements(&descriptor, &frnsc_artifacts::CATALOG);
+    let result = readiness::requirements_in(&descriptor, &frnsc_artifacts::CATALOG);
     assert_eq!(result.outcome, Outcome::Fail, "{}", result.detail);
     assert!(
         result.detail.contains("WindowsNotADefinition"),
@@ -86,7 +86,7 @@ fn requirements_pass_for_definitions_the_catalog_has_under_any_of_their_names() 
     ] {
         let descriptor = ParserDescriptor::new("test.parser", "Test", "", "1.0")
             .with_requirements(vec![Requirement::artifact(name)]);
-        let result = readiness::requirements(&descriptor, &frnsc_artifacts::CATALOG);
+        let result = readiness::requirements_in(&descriptor, &frnsc_artifacts::CATALOG);
         assert_eq!(result.outcome, Outcome::Pass, "{name}: {}", result.detail);
     }
 }
@@ -95,8 +95,30 @@ fn requirements_pass_for_definitions_the_catalog_has_under_any_of_their_names() 
 #[test]
 fn a_parser_declaring_no_artifact_is_skipped_not_passed() {
     let descriptor = ParserDescriptor::new("test.parser", "Test", "", "1.0");
-    let result = readiness::requirements(&descriptor, &frnsc_artifacts::CATALOG);
+    let result = readiness::requirements_in(&descriptor, &frnsc_artifacts::CATALOG);
     assert_eq!(result.outcome, Outcome::Skip, "{}", result.detail);
+}
+
+/// The check reads each corpus's own catalog, so a corpus with no catalog fails: a parser
+/// declaring a definition there would resolve nothing and report nothing.
+#[test]
+fn a_corpus_carrying_no_catalog_fails() {
+    let descriptor = ParserDescriptor::new("test.parser", "Test", "", "1.0")
+        .with_requirements(vec![Requirement::artifact("WindowsAMCacheHveFile")]);
+    let catalogless = fixtures::Corpus {
+        name: "no-catalog".to_string(),
+        kind: fixtures::CorpusKind::Empty,
+        sources: forensic_rs::prelude::TriageSources::builder().build(),
+    };
+    let result = readiness::requirements(&descriptor, std::slice::from_ref(&catalogless));
+    assert_eq!(result.outcome, Outcome::Fail, "{}", result.detail);
+    assert!(result.detail.contains("no-catalog"), "{}", result.detail);
+
+    // The same descriptor against the standard corpora, which do carry the catalog, passes —
+    // so the Fail above is the missing catalog and not the requirement itself.
+    let catalog = Catalog::standard();
+    let ok = readiness::requirements(&descriptor, &fixtures::standard(&catalog));
+    assert_eq!(ok.outcome, Outcome::Pass, "{}", ok.detail);
 }
 
 /// A parser resolves its definitions through the catalog the source carries, so every source

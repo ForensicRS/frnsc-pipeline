@@ -168,8 +168,82 @@ fn a_definition_names_the_crate_that_reads_its_format() {
         assert_eq!(r.status, Status::Gap, "{definition}");
     }
     // Nothing reads a format we have no crate for, and nothing is guessed from a path.
-    assert_eq!(row("WindowsScheduledTasks").reader, "-");
     assert_eq!(row("WindowsSearchDatabaseFile").format, "-");
+    // A definition spanning two container formats names neither. `WindowsScheduledTasks` is
+    // legacy `.job` binaries *and* task XML; claiming `job` would send a reader after the
+    // smaller half of the artifact.
+    let tasks = row("WindowsScheduledTasks");
+    assert_eq!((tasks.format, tasks.reader), ("-", "-"));
+    // The registry fallback applies only when every source is a registry kind. These two also
+    // have file (and, for Crowdstrike, command) sources that `frnsc-hive` does not read.
+    for definition in ["MicrosoftOfficeMRU", "CrowdstrikeAgentID"] {
+        let r = row(definition);
+        assert_eq!((r.format, r.reader), ("-", "-"), "{definition}");
+        // The source kinds that were actually read are still reported.
+        assert!(r.sources.contains("registry-value"), "{definition}");
+        assert!(r.sources.contains("file"), "{definition}");
+    }
+}
+
+/// The table must say whether a `parser` column is the parser's own declaration or this report's
+/// inference. Without it, `FirefoxHistory` reads as "Firefox history is parsed" — it is not:
+/// frnsc-sqlite declares the generic `BrowserHistory` artifact and reads only the Chromium
+/// schema (FINDINGS, closed by phase 4).
+#[test]
+fn an_inferred_row_is_marked_as_inferred_in_the_table() {
+    let table = report().to_table();
+    let line = |name: &str| {
+        table
+            .lines()
+            .find(|l| l.split_whitespace().last() == Some(name))
+            .unwrap_or_else(|| panic!("{name} has no line"))
+            .to_string()
+    };
+    let firefox = line("FirefoxHistory");
+    assert!(firefox.contains("inferred"), "{firefox}");
+    assert!(firefox.contains("windows.browser_history"), "{firefox}");
+    // A gap is not marked either way.
+    let gap = line("WindowsXMLEventLogSecurity");
+    assert!(!gap.contains("inferred"), "{gap}");
+    assert!(!gap.contains("declared"), "{gap}");
+
+    // Every line has the same column count, so the table stays splittable: no value is ever
+    // wide enough to shift the columns of its row.
+    // No `with_source`, so the column header is the first line.
+    let header = table.lines().next().unwrap_or_default();
+    assert!(header.starts_with("status"), "{header}");
+    let columns = header.split_whitespace().count();
+    for l in table
+        .lines()
+        .skip(1)
+        .take(frnsc_artifacts::DEFINITION_COUNT)
+    {
+        assert_eq!(l.split_whitespace().count(), columns, "{l}");
+    }
+}
+
+/// `--os windows` keeps definitions that declare no OS at all, because the definition format
+/// reads an empty `supported_os` as every OS. The row has to show that, or it reads as a claim
+/// about Windows that the KB never made.
+#[test]
+fn a_definition_declaring_no_os_says_so() {
+    let report = report();
+    let row = |name: &str| {
+        report
+            .rows
+            .iter()
+            .find(|r| r.definition == name)
+            .unwrap_or_else(|| panic!("{name} has no row"))
+    };
+    let any = row("LinuxCACertificatesConfiguration");
+    assert!(any.supported_os.is_empty());
+    assert!(
+        any.supports(Os::Windows),
+        "an empty supported_os is every OS"
+    );
+    assert_eq!(any.os_column(), "any");
+    assert_eq!(row("WindowsPrefetchFiles").os_column(), "Windows");
+    assert!(report.to_table().contains(" any "));
 }
 
 #[test]

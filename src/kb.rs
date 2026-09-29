@@ -43,6 +43,14 @@ impl Covering {
             Covering::Inferred => "inferred",
         }
     }
+
+    /// The value for the report's `covering` column: `-` when no parser covers the definition.
+    pub fn column(covering: Option<Covering>) -> &'static str {
+        match covering {
+            Some(c) => c.as_str(),
+            None => "-",
+        }
+    }
 }
 
 /// How far a definition is from being usable in a pipeline.
@@ -94,8 +102,26 @@ pub struct KbRow {
 
 impl KbRow {
     /// Whether the definition applies to `os` (an empty `supported_os` means every OS).
+    ///
+    /// Same rule as [`ArtifactDefinition::supports`], which this row cannot call because it owns
+    /// the `Vec<Os>` rather than borrowing the definition. Keep the two in step.
     pub fn supports(&self, os: Os) -> bool {
         self.supported_os.is_empty() || self.supported_os.contains(&os)
+    }
+
+    /// The value for the report's `os` column: the declared `supported_os`, or `any` when the
+    /// definition declares none. Printed so a row that matched an `--os` filter only because it
+    /// declares nothing is visible as such, instead of reading as a claim about that OS.
+    pub fn os_column(&self) -> String {
+        if self.supported_os.is_empty() {
+            "any".to_string()
+        } else {
+            let mut names: Vec<&'static str> =
+                self.supported_os.iter().map(|os| os.as_str()).collect();
+            names.sort_unstable();
+            names.dedup();
+            names.join("+")
+        }
     }
 }
 
@@ -140,30 +166,62 @@ impl KbReport {
         counts
     }
 
+    /// The header of [`Self::to_table`]. `definition` is last because it is the only unbounded
+    /// column.
+    const COLUMNS: [&'static str; 7] = [
+        "status", "covering", "format", "reader", "parser", "sources", "os",
+    ];
+
     /// One line per definition, plus a header and the counts. Deterministic: the rows keep the
-    /// catalog's name order and the counts come from a [`BTreeMap`].
+    /// catalog's name order, the column widths come from the rows being printed, and the counts
+    /// come from a [`BTreeMap`].
+    ///
+    /// `covering` says whether the `parser` column is the parser's own declaration or this
+    /// report's inference — an inferred row is not evidence that the parser reads that
+    /// definition. See the module docs.
     pub fn to_table(&self) -> String {
+        let cells: Vec<[String; 7]> = self.rows.iter().map(KbReport::cells).collect();
+        // Width per column from the values actually printed, so no cell is ever clipped and the
+        // table stays splittable on whitespace.
+        let mut widths = Self::COLUMNS.map(str::len);
+        for row in &cells {
+            for (w, cell) in widths.iter_mut().zip(row) {
+                *w = (*w).max(cell.chars().count());
+            }
+        }
+
         let mut s = String::new();
         if !self.source.is_empty() {
             s.push_str(&format!("# ForensicArtifacts {}\n", self.source));
         }
-        s.push_str(&format!(
-            "{:<9} {:<9} {:<16} {:<32} {:<14} {}\n",
-            "status", "format", "reader", "parser", "sources", "definition"
+        s.push_str(&line(
+            &Self::COLUMNS.map(str::to_string),
+            &widths,
+            "definition",
         ));
-        for r in &self.rows {
-            s.push_str(&format!(
-                "{:<9} {:<9} {:<16} {:<32} {:<14} {}\n",
-                r.status.as_str(),
-                r.format,
-                r.reader,
-                if r.parser.is_empty() { "-" } else { &r.parser },
-                r.sources,
-                r.definition,
-            ));
+        for (row, kb) in cells.iter().zip(&self.rows) {
+            s.push_str(&line(row, &widths, &kb.definition));
         }
         s.push_str(&self.summary());
         s
+    }
+
+    /// The padded columns of one row, in [`Self::COLUMNS`] order. `definition` is passed
+    /// separately because it is printed last and unpadded.
+    fn cells(r: &KbRow) -> [String; 7] {
+        [
+            r.status.as_str().to_string(),
+            Covering::column(r.covering).to_string(),
+            r.format.to_string(),
+            r.reader.to_string(),
+            if r.parser.is_empty() {
+                "-".to_string()
+            } else {
+                r.parser.clone()
+            },
+            r.sources.clone(),
+            r.os_column(),
+        ]
     }
 
     /// The counts line the roadmap's "reproduces the report's counts" is about.
@@ -182,6 +240,17 @@ impl KbReport {
             covering.get("inferred").copied().unwrap_or(0),
         )
     }
+}
+
+/// One table line: every column padded to its width, then `last` unpadded.
+fn line(cells: &[String; 7], widths: &[usize; 7], last: &str) -> String {
+    let mut s = String::new();
+    for (cell, width) in cells.iter().zip(widths) {
+        s.push_str(&format!("{cell:<width$} ", width = width));
+    }
+    s.push_str(last);
+    s.push('\n');
+    s
 }
 
 fn row(catalog: &Catalog, def: &ArtifactDefinition) -> KbRow {
@@ -234,33 +303,51 @@ fn source_kinds(def: &ArtifactDefinition) -> String {
     }
 }
 
-/// The parser that covers `def`, and how that was established. Parsers are tried in catalog
-/// order, declarations before inferences, so the answer does not depend on iteration order.
+/// The parsers that cover `def`, and how that was established. Declarations are looked for
+/// across the whole catalog before any inference, so a declaration always wins over an
+/// inference and the answer does not depend on iteration order.
+///
+/// *Every* matching parser is reported, joined with `+`: two parsers reading one definition is
+/// a real possibility, and picking whichever came first in the catalog would hide the second
+/// from the only report that would have shown it. Nothing in the pinned KB overlaps today.
 fn covering_parser(
     catalog: &Catalog,
     def: &ArtifactDefinition,
     artifact: Option<&Artifact>,
 ) -> Option<(String, Covering)> {
-    for (_, parser) in catalog.parsers() {
-        let descriptor = parser.descriptor();
-        let declared = descriptor.requirements.iter().any(|req| match req {
-            Requirement::Artifact(a) => names(def).any(|name| name == a.name.as_ref()),
-            _ => false,
-        });
-        if declared {
-            return Some((descriptor.id.to_string(), Covering::Declared));
-        }
+    let declared: Vec<&str> = catalog
+        .parsers()
+        .filter(|(_, parser)| {
+            parser
+                .descriptor()
+                .requirements
+                .iter()
+                .any(|req| match req {
+                    Requirement::Artifact(a) => names(def).any(|name| name == a.name.as_ref()),
+                    _ => false,
+                })
+        })
+        .map(|(_, parser)| parser.descriptor().id.as_ref())
+        .collect();
+    if !declared.is_empty() {
+        return Some((declared.join("+"), Covering::Declared));
     }
     let artifact = artifact?;
-    for (_, parser) in catalog.parsers() {
-        let descriptor = parser.descriptor();
+    let inferred: Vec<&str> = catalog
+        .parsers()
         // `ParserDescriptor::handles` reads an empty `artifacts` as "every artifact". That is
         // the right default for dispatch, but it is not coverage of this definition.
-        if !descriptor.artifacts.is_empty() && descriptor.artifacts.contains(artifact) {
-            return Some((descriptor.id.to_string(), Covering::Inferred));
-        }
+        .filter(|(_, parser)| {
+            let descriptor = parser.descriptor();
+            !descriptor.artifacts.is_empty() && descriptor.artifacts.contains(artifact)
+        })
+        .map(|(_, parser)| parser.descriptor().id.as_ref())
+        .collect();
+    if inferred.is_empty() {
+        None
+    } else {
+        Some((inferred.join("+"), Covering::Inferred))
     }
-    None
 }
 
 /// The definition's name and every alias it answers to.
@@ -291,20 +378,28 @@ pub fn format_of(
         Some(Artifact::Common(CommonArtifact::WebBrowsing(
             WebBrowsingArtifact::BrowserHistory,
         ))) => Some(("sqlite", "frnsc-sqlite")),
-        // `.job` and task XML: the KB names the format, no crate reads it (FINDINGS, phase 9).
-        Some(Artifact::Windows(W::ScheduledTasks)) => Some(("job", "-")),
+        // `W::ScheduledTasks` deliberately has no arm. Its definition spans two formats —
+        // legacy `%SystemRoot%\Tasks` `.job` binaries and the task XML under
+        // `System32\Tasks` — and on any Windows 7+ host the bulk is the XML. Naming one of
+        // them would tell a reader they need a `.job` parser when most of the artifact needs
+        // an XML reader, so it falls through to `-` (FINDINGS, phase 9).
         _ => None,
     };
     if let Some(pair) = by_artifact {
         return pair;
     }
-    let registry = def.sources.iter().any(|entry| {
-        matches!(
-            entry.source,
-            ArtifactSource::RegistryKey { .. } | ArtifactSource::RegistryValue { .. }
-        )
-    });
-    if registry {
+    // Only when *every* source is a registry kind. A definition that also has file, command or
+    // WMI sources is not a hive, and `frnsc-hive` does not read the rest of it —
+    // `MicrosoftOfficeMRU` (file + registry-value) and `CrowdstrikeAgentID` (command + file +
+    // registry-value) are the two in the pinned KB. Their `sources` column keeps the real kinds.
+    let registry_only = !def.sources.is_empty()
+        && def.sources.iter().all(|entry| {
+            matches!(
+                entry.source,
+                ArtifactSource::RegistryKey { .. } | ArtifactSource::RegistryValue { .. }
+            )
+        });
+    if registry_only {
         ("regf", "frnsc-hive")
     } else {
         ("-", "-")
