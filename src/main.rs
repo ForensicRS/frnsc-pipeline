@@ -4,9 +4,11 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use forensic_rs::catalog::Os;
 use forensic_rs::prelude::*;
 use frnsc_pipeline::catalog::Catalog;
 use frnsc_pipeline::fixtures::{self, Corpus, CorpusKind};
+use frnsc_pipeline::kb::{KbReport, Status};
 use frnsc_pipeline::run::{self, RunOptions};
 use frnsc_pipeline::{evidence, readiness};
 
@@ -41,7 +43,10 @@ enum Command {
         workers: Option<usize>,
     },
     /// List every crate the pipeline uses: parsers, formats, backends and gaps.
-    Catalog,
+    Catalog {
+        #[command(subcommand)]
+        what: Option<CatalogCommand>,
+    },
     /// Benchmark every parser for pipeline readiness.
     Bench {
         /// Also run the checks over this evidence (folder or image; repeatable).
@@ -57,6 +62,63 @@ enum Command {
         #[arg(long)]
         strict: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum CatalogCommand {
+    /// One row per ForensicArtifacts definition: its format, the crate that reads it, the
+    /// parser that covers it, and its status (parser / gap / unmapped).
+    Kb {
+        /// Only definitions with this status.
+        #[arg(long, value_enum)]
+        status: Option<StatusArg>,
+        /// Only definitions that apply to this OS.
+        #[arg(long, value_enum)]
+        os: Option<OsArg>,
+        /// Print only the counts line.
+        #[arg(long)]
+        summary: bool,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum StatusArg {
+    Parser,
+    Gap,
+    Unmapped,
+}
+
+impl From<StatusArg> for Status {
+    fn from(s: StatusArg) -> Self {
+        match s {
+            StatusArg::Parser => Status::Parser,
+            StatusArg::Gap => Status::Gap,
+            StatusArg::Unmapped => Status::Unmapped,
+        }
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum OsArg {
+    Windows,
+    Linux,
+    Darwin,
+    Esxi,
+    Android,
+    Ios,
+}
+
+impl From<OsArg> for Os {
+    fn from(os: OsArg) -> Self {
+        match os {
+            OsArg::Windows => Os::Windows,
+            OsArg::Linux => Os::Linux,
+            OsArg::Darwin => Os::Darwin,
+            OsArg::Esxi => Os::Esxi,
+            OsArg::Android => Os::Android,
+            OsArg::Ios => Os::Ios,
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -91,7 +153,7 @@ fn main() -> ExitCode {
 fn real_main(cli: Cli) -> ForensicResult<ExitCode> {
     let catalog = Catalog::standard();
     match cli.command {
-        Command::Catalog => {
+        Command::Catalog { what: None } => {
             for e in catalog.entries() {
                 println!(
                     "{:<8} {:<22} {:<32} {}",
@@ -100,6 +162,33 @@ fn real_main(cli: Cli) -> ForensicResult<ExitCode> {
                     e.name(),
                     e.detail()
                 );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Catalog {
+            what:
+                Some(CatalogCommand::Kb {
+                    status,
+                    os,
+                    summary,
+                }),
+        } => {
+            let mut report =
+                KbReport::build(&catalog, &frnsc_artifacts::CATALOG).with_source(format!(
+                    "{} @ {}",
+                    frnsc_artifacts::KB_REPO,
+                    frnsc_artifacts::KB_COMMIT
+                ));
+            if let Some(os) = os.map(Os::from) {
+                report.rows.retain(|r| r.supports(os));
+            }
+            if let Some(status) = status.map(Status::from) {
+                report.rows.retain(|r| r.status == status);
+            }
+            if summary {
+                print!("{}", report.summary());
+            } else {
+                print!("{}", report.to_table());
             }
             Ok(ExitCode::SUCCESS)
         }

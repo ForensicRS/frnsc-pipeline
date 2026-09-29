@@ -6,6 +6,7 @@
 //! | check | passes when |
 //! |---|---|
 //! | `descriptor` | the id is non-empty and unique, a version is set, and artifacts are declared |
+//! | `requirements` | every `Requirement::Artifact` it declares is a definition of the run's catalog |
 //! | `empty` | with no filesystem and no registry it neither panics nor emits a record |
 //! | `garbage` | hostile bytes at every artifact path never panic it, and the run completes |
 //! | `coverage` | it emits records on at least one valid corpus (informational: `skip` = untested) |
@@ -20,12 +21,14 @@ use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use forensic_rs::catalog::ArtifactCatalog;
 use forensic_rs::prelude::*;
 use serde::Serialize;
 
 use crate::catalog::Catalog;
 use crate::collect::Collector;
 use crate::fixtures::{Corpus, CorpusKind};
+use crate::kb;
 use crate::run::{gaps, GapSummary};
 
 const HOST: &str = "BENCH-HOST";
@@ -92,8 +95,9 @@ pub struct ReadinessMatrix {
     pub gaps: Vec<GapSummary>,
 }
 
-pub const CHECKS: [&str; 8] = [
+pub const CHECKS: [&str; 9] = [
     "descriptor",
+    "requirements",
     "empty",
     "garbage",
     "coverage",
@@ -134,7 +138,10 @@ fn check_parser(
     ids: &[String],
     corpora: &[Corpus],
 ) -> Vec<CheckResult> {
-    let mut checks = vec![descriptor(parser, ids)];
+    let mut checks = vec![
+        descriptor(parser, ids),
+        requirements(parser.descriptor(), &frnsc_artifacts::CATALOG),
+    ];
 
     // One observed run per corpus; the record-hungry checks reuse it as their baseline.
     let runs: Vec<(&Corpus, Result<Observed, String>)> = corpora
@@ -195,6 +202,42 @@ fn descriptor(parser: &Arc<dyn ArtifactParserFactory>, ids: &[String]) -> CheckR
         )
     } else {
         CheckResult::new("descriptor", Outcome::Fail, problems.join("; "))
+    }
+}
+
+/// Every artifact definition the parser declares must be one `kb` has: a parser asking for a
+/// name the run's catalog cannot resolve would find no evidence and say nothing about it, which
+/// is exactly the silent failure this benchmark exists to surface.
+///
+/// `Skip` when the parser declares no artifact requirement — nothing was checked, and the
+/// report says so instead of showing a pass it did not earn.
+pub fn requirements(descriptor: &ParserDescriptor, kb: &dyn ArtifactCatalog) -> CheckResult {
+    let declared: Vec<&str> = kb::artifact_requirements(descriptor).collect();
+    if declared.is_empty() {
+        return CheckResult::new(
+            "requirements",
+            Outcome::Skip,
+            "declares no artifact definition",
+        );
+    }
+    let unknown = kb::unknown_artifact_requirements(descriptor, kb);
+    if unknown.is_empty() {
+        CheckResult::new(
+            "requirements",
+            Outcome::Pass,
+            format!("{} definition(s) in the catalog", declared.len()),
+        )
+    } else {
+        CheckResult::new(
+            "requirements",
+            Outcome::Fail,
+            format!(
+                "{} of {} declared definition(s) are not in the catalog: {}",
+                unknown.len(),
+                declared.len(),
+                unknown.join(", ")
+            ),
+        )
     }
 }
 

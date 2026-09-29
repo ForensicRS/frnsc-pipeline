@@ -33,11 +33,15 @@ pub struct EvidenceSource {
 }
 
 impl EvidenceSource {
+    /// The source as a parser sees it. Every source carries the ForensicArtifacts catalog, so a
+    /// parser that declares `Requirement::Artifact` resolves it against the KB definitions
+    /// instead of a glob list of its own.
     pub fn sources(&self, resolver: &Arc<MountResolver>) -> TriageSources {
         let mut b = TriageSources::builder()
             .vfs(Arc::clone(&self.vfs))
             .acquisition(self.acquisition)
-            .mount_resolver(Arc::clone(resolver));
+            .mount_resolver(Arc::clone(resolver))
+            .catalog(frnsc_artifacts::catalog());
         if let Some(r) = &self.registry {
             b = b.registry(Arc::clone(r));
         }

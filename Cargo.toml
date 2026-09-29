@@ -28,6 +28,8 @@ frnsc-prefetch = "0.14"
 # No published repo yet: sibling path dependencies, like frnsc-ntfs -> frnsc-vsys.
 frnsc-ntfs = { path = "../frnsc-ntfs", features = ["volume"] }
 frnsc-vsys = { path = "../frnsc-vsys" }
+# The ForensicArtifacts catalog every source resolves its artifacts through.
+frnsc-artifacts = { path = "../frnsc-artifacts" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

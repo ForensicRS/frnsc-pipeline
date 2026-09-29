@@ -1,4 +1,8 @@
 //! Inputs the readiness benchmark feeds every parser. Synthetic only: no real case data.
+//!
+//! Every corpus carries the `frnsc-artifacts` catalog, like [`crate::evidence`] does, so a
+//! parser that resolves `Requirement::Artifact` sees the same definitions here as in a run. The
+//! catalog is host-independent data, not evidence: with no filesystem it resolves nothing.
 
 use std::sync::Arc;
 
@@ -28,7 +32,7 @@ pub struct Corpus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CorpusKind {
-    /// No filesystem, no registry.
+    /// No filesystem, no registry: only the artifact catalog.
     Empty,
     /// Hostile bytes where parsers look for their artifacts.
     Garbage,
@@ -79,7 +83,9 @@ pub fn standard(catalog: &Catalog) -> Vec<Corpus> {
     let mut out = vec![Corpus {
         name: "empty".into(),
         kind: CorpusKind::Empty,
-        sources: TriageSources::builder().build(),
+        sources: TriageSources::builder()
+            .catalog(frnsc_artifacts::catalog())
+            .build(),
     }];
     let noise = noise(64 * 1024);
     let garbage: [(&str, Filler); 4] = [
@@ -107,6 +113,7 @@ pub fn standard(catalog: &Catalog) -> Vec<Corpus> {
             .vfs(Arc::new(loose_ntfs()))
             .registry(Arc::new(feature_usage_registry()))
             .acquisition(Acquisition::RemoteCollection)
+            .catalog(frnsc_artifacts::catalog())
             .build(),
     });
     out.extend(disk_corpus(catalog));
@@ -127,6 +134,7 @@ fn garbage_corpus(name: &str, bytes: impl Fn(usize) -> Vec<u8>) -> Corpus {
             .vfs(Arc::new(fs))
             .registry(Arc::new(garbage_registry()))
             .acquisition(Acquisition::ImageRead)
+            .catalog(frnsc_artifacts::catalog())
             .build(),
     }
 }
@@ -298,7 +306,8 @@ fn disk_corpus(catalog: &Catalog) -> Vec<Corpus> {
             let mut b = TriageSources::builder()
                 .vfs(s.vfs)
                 .acquisition(s.acquisition)
-                .registry(Arc::new(feature_usage_registry()));
+                .registry(Arc::new(feature_usage_registry()))
+                .catalog(frnsc_artifacts::catalog());
             if let Some(r) = s.registry {
                 b = b.registry(r);
             }

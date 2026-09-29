@@ -2,9 +2,10 @@
 //! panic, no record from nothing) and pins the parsers known to be ready, so a regression shows
 //! up here. A newly failing parser is a finding, not necessarily a bug in this crate.
 
+use forensic_rs::prelude::{ParserDescriptor, Requirement};
 use frnsc_pipeline::catalog::Catalog;
 use frnsc_pipeline::fixtures;
-use frnsc_pipeline::readiness::{benchmark, Outcome, CHECKS};
+use frnsc_pipeline::readiness::{self, benchmark, Outcome, CHECKS};
 
 #[test]
 fn every_parser_survives_empty_and_hostile_input() {
@@ -40,8 +41,91 @@ fn parsers_with_fixtures_are_pipeline_ready() {
     ] {
         let p = matrix.parsers.iter().find(|p| p.parser == id).unwrap();
         for c in &p.checks {
+            // `requirements` is Skip until the parsers name catalog definitions (roadmap
+            // phase 4). A Fail there still has to show up here.
+            if c.check == "requirements" {
+                assert_ne!(c.outcome, Outcome::Fail, "{id} requirements: {}", c.detail);
+                continue;
+            }
             assert_eq!(c.outcome, Outcome::Pass, "{id} {}: {}", c.check, c.detail);
         }
+    }
+}
+
+/// The check phase 3 exists for: a parser naming a definition the catalog doesn't have must
+/// fail the benchmark, not run and quietly find nothing.
+#[test]
+fn a_requirement_the_catalog_does_not_have_fails() {
+    let descriptor =
+        ParserDescriptor::new("test.parser", "Test", "", "1.0").with_requirements(vec![
+            Requirement::artifact("WindowsAMCacheHveFile"),
+            Requirement::artifact("WindowsNotADefinition"),
+        ]);
+    let result = readiness::requirements(&descriptor, &frnsc_artifacts::CATALOG);
+    assert_eq!(result.outcome, Outcome::Fail, "{}", result.detail);
+    assert!(
+        result.detail.contains("WindowsNotADefinition"),
+        "{}",
+        result.detail
+    );
+    assert!(
+        !result.detail.contains("WindowsAMCacheHveFile"),
+        "the known definition should not be reported: {}",
+        result.detail
+    );
+}
+
+#[test]
+fn requirements_pass_for_definitions_the_catalog_has_under_any_of_their_names() {
+    // `WindowsActiveDirectoryDatabase` is an alias, not a definition name: a parser may name
+    // a definition either way.
+    for name in [
+        "WindowsAMCacheHveFile",
+        "WindowsUserRegistryFiles",
+        "WindowsActiveDirectoryDatabase",
+    ] {
+        let descriptor = ParserDescriptor::new("test.parser", "Test", "", "1.0")
+            .with_requirements(vec![Requirement::artifact(name)]);
+        let result = readiness::requirements(&descriptor, &frnsc_artifacts::CATALOG);
+        assert_eq!(result.outcome, Outcome::Pass, "{name}: {}", result.detail);
+    }
+}
+
+/// Nothing declared means nothing checked. A pass here would be the silent one.
+#[test]
+fn a_parser_declaring_no_artifact_is_skipped_not_passed() {
+    let descriptor = ParserDescriptor::new("test.parser", "Test", "", "1.0");
+    let result = readiness::requirements(&descriptor, &frnsc_artifacts::CATALOG);
+    assert_eq!(result.outcome, Outcome::Skip, "{}", result.detail);
+}
+
+/// A parser resolves its definitions through the catalog the source carries, so every source
+/// the pipeline builds must have one.
+#[test]
+fn every_evidence_source_carries_the_artifact_catalog() {
+    let catalog = Catalog::standard();
+    let base: std::sync::Arc<dyn forensic_rs::prelude::FileSystem> = std::sync::Arc::new(
+        forensic_rs::prelude::testing::InMemoryVirtualFileSystem::new()
+            .with_file("disk.raw", fixtures::disk_image()),
+    );
+    let ev = frnsc_pipeline::evidence::open_image_on(
+        &base,
+        "disk.raw",
+        &catalog,
+        forensic_rs::prelude::Acquisition::ImageRead,
+    );
+    assert!(!ev.sources.is_empty(), "no source from the synthetic disk");
+    let resolver = std::sync::Arc::new(catalog.resolver(None));
+    for source in &ev.sources {
+        let sources = source.sources(&resolver);
+        let kb = sources
+            .catalog()
+            .unwrap_or_else(|| panic!("{}: no artifact catalog", source.label));
+        assert!(
+            kb.get("WindowsAMCacheHveFile").is_some(),
+            "{}: the catalog is not the ForensicArtifacts one",
+            source.label
+        );
     }
 }
 
