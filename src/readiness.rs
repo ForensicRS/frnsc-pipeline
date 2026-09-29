@@ -233,6 +233,8 @@ pub fn requirements(descriptor: &ParserDescriptor, corpora: &[Corpus]) -> CheckR
         );
     }
     // One problem per corpus, in corpus order, so the report names which run cannot resolve what.
+    // The rule itself lives in [`requirements_in`]; this function only picks each corpus's
+    // catalog and names the corpus, so the two cannot drift apart.
     let mut problems = Vec::new();
     for corpus in corpora {
         match corpus.sources.catalog() {
@@ -242,15 +244,9 @@ pub fn requirements(descriptor: &ParserDescriptor, corpora: &[Corpus]) -> CheckR
                 declared.len()
             )),
             Some(kb) => {
-                let unknown = kb::unknown_artifact_requirements(descriptor, kb.as_ref());
-                if !unknown.is_empty() {
-                    problems.push(format!(
-                        "{}: {} of {} declared definition(s) are not in the catalog: {}",
-                        corpus.name,
-                        unknown.len(),
-                        declared.len(),
-                        unknown.join(", ")
-                    ));
+                let result = requirements_in(descriptor, kb.as_ref());
+                if result.outcome == Outcome::Fail {
+                    problems.push(format!("{}: {}", corpus.name, result.detail));
                 }
             }
         }

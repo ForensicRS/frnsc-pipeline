@@ -121,6 +121,42 @@ fn a_corpus_carrying_no_catalog_fails() {
     assert_eq!(ok.outcome, Outcome::Pass, "{}", ok.detail);
 }
 
+/// The unknown-definition rule on the function the benchmark actually calls. The same rule is
+/// pinned on `requirements_in` above, but nothing in the product calls that one: without this
+/// test, deleting the unknown-name branch from `requirements` would leave the suite green.
+#[test]
+fn a_requirement_the_corpus_catalog_does_not_have_fails() {
+    let descriptor =
+        ParserDescriptor::new("test.parser", "Test", "", "1.0").with_requirements(vec![
+            Requirement::artifact("WindowsAMCacheHveFile"),
+            Requirement::artifact("WindowsNotADefinition"),
+        ]);
+    let catalog = Catalog::standard();
+    let corpora = fixtures::standard(&catalog);
+    let result = readiness::requirements(&descriptor, &corpora);
+    assert_eq!(result.outcome, Outcome::Fail, "{}", result.detail);
+    assert!(
+        result.detail.contains("WindowsNotADefinition"),
+        "the unresolvable definition should be named: {}",
+        result.detail
+    );
+    assert!(
+        !result.detail.contains("WindowsAMCacheHveFile"),
+        "the known definition should not be reported: {}",
+        result.detail
+    );
+    // Every corpus carries the catalog, so every one of them reports the same problem, each
+    // named — a failure here is a property of the descriptor, not of one fixture.
+    for corpus in &corpora {
+        assert!(
+            result.detail.contains(&corpus.name),
+            "{} should be named: {}",
+            corpus.name,
+            result.detail
+        );
+    }
+}
+
 /// A parser resolves its definitions through the catalog the source carries, so every source
 /// the pipeline builds must have one.
 #[test]

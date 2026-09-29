@@ -183,7 +183,9 @@ impl KbReport {
         let cells: Vec<[String; 7]> = self.rows.iter().map(KbReport::cells).collect();
         // Width per column from the values actually printed, so no cell is ever clipped and the
         // table stays splittable on whitespace.
-        let mut widths = Self::COLUMNS.map(str::len);
+        // `chars().count()`, matching how the cells below are measured and how `Formatter::pad`
+        // counts when it pads, so a non-ASCII header cannot under-reserve its column.
+        let mut widths = Self::COLUMNS.map(|c| c.chars().count());
         for row in &cells {
             for (w, cell) in widths.iter_mut().zip(row) {
                 *w = (*w).max(cell.chars().count());
@@ -315,7 +317,7 @@ fn covering_parser(
     def: &ArtifactDefinition,
     artifact: Option<&Artifact>,
 ) -> Option<(String, Covering)> {
-    let declared: Vec<&str> = catalog
+    let mut declared: Vec<&str> = catalog
         .parsers()
         .filter(|(_, parser)| {
             parser
@@ -330,10 +332,13 @@ fn covering_parser(
         .map(|(_, parser)| parser.descriptor().id.as_ref())
         .collect();
     if !declared.is_empty() {
+        // Sorted, so the cell is a property of the set of covering parsers and not of the order
+        // the entries happen to sit in `catalog.rs`.
+        declared.sort_unstable();
         return Some((declared.join("+"), Covering::Declared));
     }
     let artifact = artifact?;
-    let inferred: Vec<&str> = catalog
+    let mut inferred: Vec<&str> = catalog
         .parsers()
         // `ParserDescriptor::handles` reads an empty `artifacts` as "every artifact". That is
         // the right default for dispatch, but it is not coverage of this definition.
@@ -346,6 +351,7 @@ fn covering_parser(
     if inferred.is_empty() {
         None
     } else {
+        inferred.sort_unstable();
         Some((inferred.join("+"), Covering::Inferred))
     }
 }
