@@ -64,18 +64,6 @@ pub struct SkippedParser {
     pub detail: String,
 }
 
-/// Recomputes why `descriptor` did not run against `sources`, from its declared
-/// `Requirement::Artifact` list — the same information `can_parse` had, examined instead of
-/// collapsed into a bool.
-///
-/// Meant to be called on a parser that is already known to have been skipped (`can_parse`
-/// returned `false`, or `open` failed). Checked in the same order `can_parse` implementations
-/// in this workspace check them (see `frnsc-winevt`/`frnsc-esedb`'s `can_parse`): a missing
-/// filesystem before a missing catalog, because with no filesystem at all a missing catalog is
-/// not the interesting fact. A missing registry backend gets the same treatment, but only when a
-/// declared definition actually needs one (`REGISTRY_KEY`/`REGISTRY_VALUE` sources) — unlike the
-/// filesystem, most definitions in this catalog today are file-only, so a registry-less source is
-/// the normal case and must not be blamed for them.
 /// Whether `def` can only ever resolve through the registry under
 /// [`ParseContext::resolve_artifact`](forensic_rs::prelude::ParseContext::resolve_artifact)'s own
 /// OS choice (Windows when the definition supports it, else its first supported OS — see
@@ -100,6 +88,18 @@ fn only_resolves_through_registry(def: &ArtifactDefinition) -> bool {
         })
 }
 
+/// Recomputes why `descriptor` did not run against `sources`, from its declared
+/// `Requirement::Artifact` list — the same information `can_parse` had, examined instead of
+/// collapsed into a bool.
+///
+/// Meant to be called on a parser that is already known to have been skipped (`can_parse`
+/// returned `false`, or `open` failed). Checked in the same order `can_parse` implementations
+/// in this workspace check them (see `frnsc-winevt`/`frnsc-esedb`'s `can_parse`): a missing
+/// filesystem before a missing catalog, because with no filesystem at all a missing catalog is
+/// not the interesting fact. A missing registry backend gets the same treatment, but only when a
+/// declared definition actually needs one (`REGISTRY_KEY`/`REGISTRY_VALUE` sources) — unlike the
+/// filesystem, most definitions in this catalog today are file-only, so a registry-less source is
+/// the normal case and must not be blamed for them.
 pub fn classify(descriptor: &ParserDescriptor, sources: &TriageSources) -> (SkipReason, String) {
     let declared: Vec<&str> = kb::artifact_requirements(descriptor).collect();
     if declared.is_empty() {
