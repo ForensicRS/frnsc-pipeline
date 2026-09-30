@@ -56,20 +56,26 @@ fn rows_are_sorted_by_definition_name() {
 /// `WindowsXMLEventLogTerminalServices` was `Unmapped` (`frnsc_artifacts::output_artifact` has no
 /// `WindowsEvents` variant for it), and a declared requirement rescues a definition from
 /// `Unmapped` same as from `Gap` — see `mapped_definitions_are_never_unmapped`.
+///
+/// FOR-28 (2026-09-30) moved 4 more definitions from unmapped to parser:
+/// `frnsc_linux::unix::utmp::UtmpParserFactory` declares `LinuxLastlogFile`, `LinuxUtmpFiles`,
+/// `LinuxWtmp` and `UnixUtmpFile`, and `frnsc_artifacts::output_artifact` now maps all four to
+/// `Artifact::Linux(LinuxArtifacts::Utmp)`. All four were `Unmapped` (no Linux parser existed
+/// before this), so `Gap` is unchanged.
 #[test]
 fn the_counts_are_pinned() {
     let report = report();
     let counts = report.counts();
     assert_eq!(
         counts.get(&Status::Parser),
-        Some(&13),
+        Some(&17),
         "{}",
         report.summary()
     );
     assert_eq!(counts.get(&Status::Gap), Some(&7), "{}", report.summary());
     assert_eq!(
         counts.get(&Status::Unmapped),
-        Some(&712),
+        Some(&708),
         "{}",
         report.summary()
     );
@@ -126,17 +132,19 @@ fn the_parser_column_agrees_with_the_status() {
 
 /// Until roadmap phase 4, most coverage is inferred from the output artifact rather than a
 /// parser's own `Requirement::Artifact` declaration — a heuristic, and this pin is what makes its
-/// removal visible. FOR-5's `windows.evtx`/`windows.srum` are the first two parsers to declare
-/// their definitions outright, so their rows are the exception: `Declared`, not `Inferred`.
+/// removal visible. FOR-5's `windows.evtx`/`windows.srum` and FOR-28's `linux.utmp` are the
+/// parsers that declare their definitions outright, so their rows are the exception: `Declared`,
+/// not `Inferred`.
 #[test]
 fn coverage_is_inferred_until_the_parsers_declare_their_definitions() {
     let report = report();
-    assert_eq!(report.covering_counts().get("declared"), Some(&7));
+    assert_eq!(report.covering_counts().get("declared"), Some(&11));
     assert_eq!(report.covering_counts().get("inferred"), Some(&6));
     let declared: Vec<&str> = frnsc_winevt::parser::DEFINITIONS
         .iter()
         .copied()
         .chain([frnsc_esedb::srum::parser::DEFINITION])
+        .chain(frnsc_linux::unix::utmp::DEFINITIONS.iter().copied())
         .collect();
     for row in report.rows.iter().filter(|r| r.status == Status::Parser) {
         let expected = if declared.contains(&row.definition.as_str()) {
@@ -310,7 +318,7 @@ fn the_table_carries_the_kb_commit_and_the_counts() {
         .to_table();
     assert!(table.contains(frnsc_artifacts::KB_COMMIT), "{table:.200}");
     assert!(
-        table.contains("732 definitions: 13 parser, 7 gap, 712 unmapped"),
+        table.contains("732 definitions: 17 parser, 7 gap, 708 unmapped"),
         "{}",
         table.lines().last().unwrap_or_default()
     );

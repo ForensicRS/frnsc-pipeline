@@ -30,6 +30,8 @@ frnsc-ntfs = { path = "../frnsc-ntfs", features = ["volume"] }
 frnsc-vsys = { path = "../frnsc-vsys" }
 # The ForensicArtifacts catalog every source resolves its artifacts through.
 frnsc-artifacts = { path = "../frnsc-artifacts" }
+# No published repo yet either (FOR-37): sibling path dependency.
+frnsc-linux = { path = "../frnsc-linux" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
