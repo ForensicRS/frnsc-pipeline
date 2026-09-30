@@ -193,6 +193,27 @@ fn every_evidence_source_carries_the_artifact_catalog() {
     }
 }
 
+/// The other half of the structural invariant `skip::classify` relies on to tell "no catalog
+/// attached" apart from "genuinely absent": every built-in corpus carries one, same as every
+/// `EvidenceSource` (`every_evidence_source_carries_the_artifact_catalog` above). A catalog-less
+/// `TriageSources` only happens today when a caller builds one by hand — as the FOR-22 pin in
+/// `frnsc_pipeline::skip` does deliberately, to exercise the `no_catalog` path at all.
+#[test]
+fn every_standard_corpus_carries_the_artifact_catalog() {
+    let catalog = Catalog::standard();
+    for corpus in fixtures::standard(&catalog) {
+        let kb = corpus
+            .sources
+            .catalog()
+            .unwrap_or_else(|| panic!("{}: no artifact catalog", corpus.name));
+        assert!(
+            kb.get("WindowsAMCacheHveFile").is_some(),
+            "{}: the catalog is not the ForensicArtifacts one",
+            corpus.name
+        );
+    }
+}
+
 #[test]
 fn report_lists_parsers_and_gaps() {
     let catalog = Catalog::standard();

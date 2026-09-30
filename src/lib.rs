@@ -9,6 +9,8 @@
 //!   to a timeline, a provenance side table and a findings file.
 //! * [`readiness`]: the same parsers against empty, hostile and valid inputs ([`fixtures`]),
 //!   reported as a pass/fail matrix.
+//! * [`skip`]: why a parser did not run — recomputes the reason `can_parse`'s bare `bool`
+//!   collapses, shared by [`run`] and [`readiness`].
 
 pub mod analyzers;
 pub mod catalog;
@@ -18,3 +20,4 @@ pub mod fixtures;
 pub mod kb;
 pub mod readiness;
 pub mod run;
+pub mod skip;

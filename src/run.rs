@@ -24,6 +24,8 @@ use serde::Serialize;
 use crate::analyzers::ExecutionCorrelator;
 use crate::catalog::{Catalog, Component};
 use crate::evidence::{Evidence, EvidenceSource, Unmounted};
+use crate::kb;
+use crate::skip::{self, SkippedParser};
 
 pub struct RunOptions {
     pub out_dir: PathBuf,
@@ -52,7 +54,7 @@ pub struct SourceSummary {
     pub dir: String,
     pub registry: bool,
     pub parsers_run: Vec<String>,
-    pub parsers_skipped: Vec<String>,
+    pub parsers_skipped: Vec<SkippedParser>,
     pub records: u64,
     pub findings: u64,
     pub errors: Vec<String>,
@@ -125,10 +127,12 @@ struct Outputs {
     findings: BufWriter<File>,
 }
 
-/// Creates the per-source files. Findings raised while opening the source go first.
-fn outputs(dir: &Path, source: &EvidenceSource) -> ForensicResult<Outputs> {
+/// Creates the per-source files. Findings raised while opening the source go first, then
+/// `extra`: findings this run itself raised before parsing started (e.g. a missing artifact
+/// catalog — see [`no_catalog_finding`]).
+fn outputs(dir: &Path, source: &EvidenceSource, extra: &[Finding]) -> ForensicResult<Outputs> {
     let mut findings = BufWriter::new(File::create(dir.join("findings.jsonl"))?);
-    for f in &source.findings {
+    for f in source.findings.iter().chain(extra) {
         write_finding(&mut findings, f)?;
     }
     findings.flush()?;
@@ -152,6 +156,45 @@ fn write_finding(w: &mut impl Write, f: &Finding) -> ForensicResult<()> {
     Ok(())
 }
 
+/// When `sources` carries no artifact catalog and at least one of `descriptors` declares
+/// `Requirement::Artifact`, that parser is blind for this source: it cannot even check whether
+/// its artifact is present. Raised as a `Finding` naming the affected parsers, not an error —
+/// a catalog-less source is legitimate for a parser that needs none (e.g. NTFS's loose-file
+/// parsers), so this stays silent unless a registered parser actually needed the catalog.
+fn no_catalog_finding<'a>(
+    descriptors: impl Iterator<Item = &'a ParserDescriptor>,
+    sources: &TriageSources,
+) -> Option<Finding> {
+    if sources.catalog().is_some() {
+        return None;
+    }
+    let mut needs_catalog: Vec<String> = descriptors
+        .filter(|d| kb::artifact_requirements(d).next().is_some())
+        .map(|d| d.id.to_string())
+        .collect();
+    if needs_catalog.is_empty() {
+        return None;
+    }
+    needs_catalog.sort();
+    Some(
+        Finding::new(
+            FindingSeverity::Low,
+            FindingCategory::Other("NoArtifactCatalog".to_string()),
+            format!(
+                "{} parser(s) skipped: no artifact catalog attached",
+                needs_catalog.len()
+            ),
+        )
+        .with_description(format!(
+            "This source carries no ArtifactCatalog, so the following parser(s) that resolve \
+             Requirement::Artifact could not check the evidence at all: {}. This is a \
+             misconfigured run, not an empty one — see each parser's `no_catalog` entry in \
+             `parsers_skipped`.",
+            needs_catalog.join(", ")
+        )),
+    )
+}
+
 fn context(opts: &RunOptions) -> TriageContext {
     TriageContext::new(opts.host.clone(), "default")
 }
@@ -163,10 +206,14 @@ fn run_serial(
     opts: &RunOptions,
     dir: &Path,
 ) -> ForensicResult<SourceSummary> {
-    let out = outputs(dir, source)?;
+    let registry = catalog.parser_registry()?;
+    let sources = source.sources(resolver);
+    let extra_findings: Vec<Finding> = no_catalog_finding(registry.descriptors(), &sources)
+        .into_iter()
+        .collect();
+    let out = outputs(dir, source, &extra_findings)?;
     let ctx = context(opts);
     let store = ctx.provenance_store();
-    let registry = catalog.parser_registry()?;
     let mut pipeline = TriagePipeline::builder()
         .context(ctx)
         .parsers_from(&registry)
@@ -179,16 +226,36 @@ fn run_serial(
         .sink(Box::new(JsonlFindingSink::new(out.findings)))
         .on_parser_error(ErrorAction::Continue)
         .build()?;
-    let result = pipeline.run(&source.sources(resolver))?;
+    let result = pipeline.run(&sources)?;
+    let parsers_skipped = result
+        .parsers_skipped
+        .into_iter()
+        .map(|id| {
+            let (reason, detail) = match registry.get(&id) {
+                Some(parser) => skip::classify(parser.descriptor(), &sources),
+                None => (
+                    skip::SkipReason::Declined,
+                    "parser id not found in this run's registry".to_string(),
+                ),
+            };
+            SkippedParser {
+                parser: id,
+                reason,
+                detail,
+            }
+        })
+        .collect();
     Ok(SourceSummary {
         label: source.label.clone(),
         locator: source.locator.to_string(),
         dir: String::new(),
         registry: source.registry.is_some(),
         parsers_run: result.parsers_run,
-        parsers_skipped: result.parsers_skipped,
+        parsers_skipped,
         records: result.items_processed,
-        findings: result.findings_count + source.findings.len() as u64,
+        findings: result.findings_count
+            + source.findings.len() as u64
+            + extra_findings.len() as u64,
         errors: result.errors.iter().map(|e| e.to_string()).collect(),
     })
 }
@@ -202,10 +269,14 @@ fn run_parallel(
     opts: &RunOptions,
     dir: &Path,
 ) -> ForensicResult<SourceSummary> {
-    let out = outputs(dir, source)?;
+    let sources = source.sources(resolver);
+    let extra_findings: Vec<Finding> =
+        no_catalog_finding(catalog.parsers().map(|(_, p)| p.descriptor()), &sources)
+            .into_iter()
+            .collect();
+    let out = outputs(dir, source, &extra_findings)?;
     let ctx = context(opts);
     let store = ctx.provenance_store();
-    let sources = source.sources(resolver);
     let correlator = ExecutionCorrelator::new();
     let wanted = correlator.supported_artifacts();
 
@@ -254,9 +325,14 @@ fn run_parallel(
         registry: source.registry.is_some(),
         // The parallel result reports tasks, not parsers; list the parsers it was given.
         parsers_run: names,
+        // The parallel pipeline does not report which parser tasks declined via `can_parse`
+        // (`ParallelPipelineResult` carries no such list) — a pre-existing gap in that result
+        // type, not something to paper over here with a guess.
         parsers_skipped: Vec::new(),
         records: result.items_processed,
-        findings: result.findings_count + source.findings.len() as u64,
+        findings: result.findings_count
+            + source.findings.len() as u64
+            + extra_findings.len() as u64,
         errors: result
             .errors
             .iter()

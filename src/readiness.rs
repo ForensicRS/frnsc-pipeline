@@ -30,6 +30,7 @@ use crate::collect::Collector;
 use crate::fixtures::{Corpus, CorpusKind};
 use crate::kb;
 use crate::run::{gaps, GapSummary};
+use crate::skip;
 
 const HOST: &str = "BENCH-HOST";
 
@@ -151,7 +152,7 @@ fn check_parser(
 
     checks.push(empty(&runs));
     checks.push(garbage(&runs));
-    checks.push(coverage(&runs));
+    checks.push(coverage(parser.descriptor(), &runs));
 
     let with_records: Vec<(&Corpus, &Observed)> = runs
         .iter()
@@ -346,10 +347,20 @@ fn garbage(runs: &[(&Corpus, Result<Observed, String>)]) -> CheckResult {
     )
 }
 
-fn coverage(runs: &[(&Corpus, Result<Observed, String>)]) -> CheckResult {
-    let hits: Vec<String> = runs
+/// `Pass` when at least one valid/external corpus gave the parser a record. Otherwise `Skip`,
+/// with a per-corpus reason classified the same way [`crate::run`] classifies a run summary's
+/// `parsers_skipped`: a corpus that never attached a catalog reads as `no_catalog`, not
+/// `artifact_absent` — the exact confusion FOR-22 exists to remove from this report too.
+fn coverage(
+    descriptor: &ParserDescriptor,
+    runs: &[(&Corpus, Result<Observed, String>)],
+) -> CheckResult {
+    let relevant: Vec<&(&Corpus, Result<Observed, String>)> = runs
         .iter()
         .filter(|(c, _)| matches!(c.kind, CorpusKind::Valid | CorpusKind::External))
+        .collect();
+    let hits: Vec<String> = relevant
+        .iter()
         .filter_map(|(c, r)| {
             r.as_ref()
                 .ok()
@@ -357,15 +368,27 @@ fn coverage(runs: &[(&Corpus, Result<Observed, String>)]) -> CheckResult {
                 .map(|o| format!("{}: {}", c.name, o.records.len()))
         })
         .collect();
-    if hits.is_empty() {
-        CheckResult::new(
+    if !hits.is_empty() {
+        return CheckResult::new("coverage", Outcome::Pass, hits.join(", "));
+    }
+    if relevant.is_empty() {
+        return CheckResult::new(
             "coverage",
             Outcome::Skip,
             "no valid corpus exercises this parser",
-        )
-    } else {
-        CheckResult::new("coverage", Outcome::Pass, hits.join(", "))
+        );
     }
+    let reasons: Vec<String> = relevant
+        .iter()
+        .map(|(c, r)| match r {
+            Err(panic) => format!("{}: run failed ({panic})", c.name),
+            Ok(_) => {
+                let (reason, detail) = skip::classify(descriptor, &c.sources);
+                format!("{}: {reason} ({detail})", c.name)
+            }
+        })
+        .collect();
+    CheckResult::new("coverage", Outcome::Skip, reasons.join("; "))
 }
 
 fn determinism(

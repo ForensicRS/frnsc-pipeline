@@ -63,9 +63,22 @@ fn serial_run_writes_a_deterministic_timeline() {
         "{:?}",
         s.parsers_run
     );
-    assert!(s
+    let feature_usage = s
         .parsers_skipped
-        .contains(&"windows.registry.feature_usage".to_string()));
+        .iter()
+        .find(|p| p.parser == "windows.registry.feature_usage")
+        .unwrap_or_else(|| {
+            panic!(
+                "windows.registry.feature_usage not skipped: {:?}",
+                s.parsers_skipped
+            )
+        });
+    // No hives on this volume (see `image_is_opened_down_to_its_ntfs_volume` above): declined
+    // for a reason local to the parser (no registry), not an artifact-catalog reason.
+    assert_eq!(
+        feature_usage.reason,
+        frnsc_pipeline::skip::SkipReason::Declined
+    );
     assert!(s.records > 0);
     assert!(summary.gaps.iter().any(|g| g.crate_name == "frnsc-triage"));
 
