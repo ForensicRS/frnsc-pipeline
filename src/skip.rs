@@ -76,6 +76,30 @@ pub struct SkippedParser {
 /// declared definition actually needs one (`REGISTRY_KEY`/`REGISTRY_VALUE` sources) — unlike the
 /// filesystem, most definitions in this catalog today are file-only, so a registry-less source is
 /// the normal case and must not be blamed for them.
+/// Whether `def` can only ever resolve through the registry under
+/// [`ParseContext::resolve_artifact`](forensic_rs::prelude::ParseContext::resolve_artifact)'s own
+/// OS choice (Windows when the definition supports it, else its first supported OS — see
+/// `context.rs`'s `resolve_artifact`). A `.any()` over every source, ignoring `supported_os`,
+/// over-fires on a definition like `WindowsEnvironmentVariableProgramFiles`: it has both a `Path`
+/// and a `RegistryValue` source, both with an empty (every-OS) `supported_os`, so on Windows the
+/// path source is just as reachable as the registry one and a missing registry must not be
+/// blamed for it.
+fn only_resolves_through_registry(def: &ArtifactDefinition) -> bool {
+    let os = if def.supports(Os::Windows) {
+        Os::Windows
+    } else {
+        def.supported_os.first().copied().unwrap_or(Os::Windows)
+    };
+    let mut applicable = def.sources.iter().filter(|s| s.supports(os)).peekable();
+    applicable.peek().is_some()
+        && applicable.all(|s| {
+            matches!(
+                s.source,
+                ArtifactSource::RegistryKey { .. } | ArtifactSource::RegistryValue { .. }
+            )
+        })
+}
+
 pub fn classify(descriptor: &ParserDescriptor, sources: &TriageSources) -> (SkipReason, String) {
     let declared: Vec<&str> = kb::artifact_requirements(descriptor).collect();
     if declared.is_empty() {
@@ -120,14 +144,9 @@ pub fn classify(descriptor: &ParserDescriptor, sources: &TriageSources) -> (Skip
         let needs_registry: Vec<&str> = declared
             .iter()
             .filter(|name| {
-                catalog.get(name).is_some_and(|def| {
-                    def.sources.iter().any(|s| {
-                        matches!(
-                            s.source,
-                            ArtifactSource::RegistryKey { .. } | ArtifactSource::RegistryValue { .. }
-                        )
-                    })
-                })
+                catalog
+                    .get(name)
+                    .is_some_and(only_resolves_through_registry)
             })
             .copied()
             .collect();
@@ -290,5 +309,47 @@ mod tests {
         let parser = frnsc_winevt::EvtxParserFactory::new();
         let (reason, detail) = classify(parser.descriptor(), &sources);
         assert_eq!(reason, SkipReason::ArtifactAbsent, "{detail}");
+    }
+
+    /// `WindowsEnvironmentVariableProgramFiles` (`frnsc-artifacts`) declares one `Path` source
+    /// and one `RegistryValue` source, both with an empty (every-OS) `supported_os`: on Windows
+    /// (the OS `resolve_artifact` picks for this definition) the path is just as reachable as
+    /// the registry value. A registry guard that fires on "has *a* registry source" rather than
+    /// "every OS-applicable source is a registry source" would wrongly decline this with no
+    /// registry attached, even though the filesystem path could still resolve it.
+    #[test]
+    fn artifact_absent_still_reachable_with_no_registry_for_a_mixed_file_and_registry_definition()
+    {
+        let sources = TriageSources::builder()
+            .vfs(Arc::new(InMemoryVirtualFileSystem::new()))
+            .catalog(frnsc_artifacts::catalog())
+            .build();
+        assert!(sources.registry().is_none());
+        let descriptor = ParserDescriptor::new("test.parser", "Test", "", "1.0")
+            .with_requirements(vec![Requirement::artifact(
+                "WindowsEnvironmentVariableProgramFiles",
+            )]);
+        let (reason, detail) = classify(&descriptor, &sources);
+        assert_eq!(reason, SkipReason::ArtifactAbsent, "{detail}");
+    }
+
+    /// `MicrosoftOfficeMRU` (`frnsc-artifacts`) declares a `Darwin`-only `File` source and a
+    /// `Windows`-only `RegistryValue` source. `resolve_artifact` always resolves cross-platform
+    /// definitions like this one for Windows (see `only_resolves_through_registry`'s doc comment
+    /// and `context.rs`'s `resolve_artifact`), so the Darwin file source never applies through
+    /// it: for this definition, "only resolves through the registry" is still the right call
+    /// even though it also has a non-registry source overall.
+    #[test]
+    fn declined_when_a_registry_only_for_its_resolved_os_definition_has_no_registry_attached() {
+        let descriptor = ParserDescriptor::new("test.parser", "Test", "", "1.0")
+            .with_requirements(vec![Requirement::artifact("MicrosoftOfficeMRU")]);
+        let sources = TriageSources::builder()
+            .vfs(Arc::new(InMemoryVirtualFileSystem::new()))
+            .catalog(frnsc_artifacts::catalog())
+            .build();
+        assert!(sources.registry().is_none());
+        let (reason, detail) = classify(&descriptor, &sources);
+        assert_eq!(reason, SkipReason::Declined, "{detail}");
+        assert!(detail.contains("no registry attached"), "{detail}");
     }
 }
