@@ -116,6 +116,15 @@ pub fn standard(catalog: &Catalog) -> Vec<Corpus> {
             .catalog(frnsc_artifacts::catalog())
             .build(),
     });
+    out.push(Corpus {
+        name: "valid-winevt-srum".into(),
+        kind: CorpusKind::Valid,
+        sources: TriageSources::builder()
+            .vfs(Arc::new(winevt_srum_vfs()))
+            .acquisition(Acquisition::ImageRead)
+            .catalog(frnsc_artifacts::catalog())
+            .build(),
+    });
     out.extend(disk_corpus(catalog));
     out
 }
@@ -202,6 +211,27 @@ pub fn loose_ntfs() -> InMemoryVirtualFileSystem {
         .with_file(
             "C/Windows/Prefetch/CMD.EXE-4A81B364.pf",
             prefetch_v17("CMD.EXE", 0x4A81_B364, T + 3_600 * 10_000_000, 12),
+        )
+}
+
+/// A well-formed `Security.evtx`/`System.evtx` and `SRUDB.dat`, at the exact paths the
+/// `WindowsXMLEventLog*` and `WindowsSystemResourceUsageMonitorDatabaseFile` catalog definitions
+/// name (see [`ARTIFACT_PATHS`]). Two event logs, not one, so `windows.evtx` has at least two
+/// records: the readiness benchmark's `cancellation` check needs that to run rather than skip.
+fn winevt_srum_vfs() -> InMemoryVirtualFileSystem {
+    InMemoryVirtualFileSystem::new()
+        .with_file(
+            "Windows/System32/winevt/Logs/Security.evtx",
+            frnsc_winevt::fixtures::evtx_file("Security"),
+        )
+        .with_file(
+            "Windows/System32/winevt/Logs/System.evtx",
+            frnsc_winevt::fixtures::evtx_file("System"),
+        )
+        .with_file(
+            "Windows/System32/sru/SRUDB.dat",
+            frnsc_esedb::fixtures::srum::srum_database()
+                .expect("the synthetic SRUM database fixture is well-formed by construction"),
         )
 }
 

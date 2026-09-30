@@ -38,6 +38,12 @@ fn parsers_with_fixtures_are_pipeline_ready() {
         "windows.ntfs.sds",
         "windows.registry.feature_usage",
         "windows.prefetch",
+        // FOR-5: `frnsc_winevt::EvtxParserFactory` and `frnsc_esedb::srum::SrumParserFactory`
+        // declare every definition they resolve, so `requirements` is Pass here, not Skip like
+        // the rest of this list — a future factory that stops covering a declared definition
+        // fails this pin instead of quietly emitting nothing.
+        "windows.evtx",
+        "windows.srum",
     ] {
         let p = matrix.parsers.iter().find(|p| p.parser == id).unwrap();
         for c in &p.checks {
@@ -195,7 +201,7 @@ fn report_lists_parsers_and_gaps() {
     for (_, p) in catalog.parsers() {
         assert!(md.contains(&format!("`{}`", p.descriptor().id)));
     }
-    for gap in ["frnsc-winevt", "frnsc-esedb"] {
+    for gap in ["frnsc-triage", "frnsc-liveregistry-rs"] {
         assert!(md.contains(gap), "{gap} missing from the report");
     }
     let json = serde_json::to_value(&matrix).unwrap();

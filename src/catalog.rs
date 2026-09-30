@@ -106,6 +106,8 @@ impl Catalog {
             ),
             CatalogEntry::parser("frnsc-sqlite", frnsc_sqlite::artifacts::parser::BrowserHistoryParserFactory::new()),
             CatalogEntry::parser("frnsc-prefetch", frnsc_prefetch::parser::PrefetchParserFactory::new()),
+            CatalogEntry::parser("frnsc-winevt", frnsc_winevt::EvtxParserFactory::new()),
+            CatalogEntry::parser("frnsc-esedb", frnsc_esedb::srum::SrumParserFactory::new()),
             // Formats that yield a FileSystem: these are what images, partitions and embedded
             // containers are opened with.
             CatalogEntry::format("forensic-rs", SplitRawFactory::new()),
@@ -127,21 +129,6 @@ impl Catalog {
                 },
             },
             // Gaps.
-            CatalogEntry {
-                crate_name: "frnsc-esedb",
-                component: Component::Gap {
-                    artifact: "SRUM",
-                    reason: "SrumDatabase has iterators and a timeline(), but no ArtifactParserFactory",
-                },
-            },
-            CatalogEntry {
-                crate_name: "frnsc-winevt",
-                component: Component::Gap {
-                    artifact: "WinEvt",
-                    reason: "EventLogReader backend and format factories only; no ArtifactParserFactory \
-                             that finds .evtx files on a volume and emits their events",
-                },
-            },
             CatalogEntry {
                 crate_name: "frnsc-triage",
                 component: Component::Gap {

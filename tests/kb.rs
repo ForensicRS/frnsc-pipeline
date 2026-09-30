@@ -49,20 +49,27 @@ fn rows_are_sorted_by_definition_name() {
 /// and 11 gap over a 15-definition mapping; both deltas are accounted for in the status log:
 /// `WindowsPrefetchFiles` gained a factory, `FirefoxHistory` is covered only by inference, and
 /// `frnsc-artifacts`' mapping added the four registry definitions.
+///
+/// FOR-5 (2026-09-30) moved 7 definitions from gap/unmapped to parser: `frnsc_winevt::EvtxParserFactory`
+/// declares the six `WindowsXMLEventLog*` names, `frnsc_esedb::srum::SrumParserFactory` declares
+/// `WindowsSystemResourceUsageMonitorDatabaseFile`. Six of those seven were `Gap`;
+/// `WindowsXMLEventLogTerminalServices` was `Unmapped` (`frnsc_artifacts::output_artifact` has no
+/// `WindowsEvents` variant for it), and a declared requirement rescues a definition from
+/// `Unmapped` same as from `Gap` — see `mapped_definitions_are_never_unmapped`.
 #[test]
 fn the_counts_are_pinned() {
     let report = report();
     let counts = report.counts();
     assert_eq!(
         counts.get(&Status::Parser),
-        Some(&6),
+        Some(&13),
         "{}",
         report.summary()
     );
-    assert_eq!(counts.get(&Status::Gap), Some(&13), "{}", report.summary());
+    assert_eq!(counts.get(&Status::Gap), Some(&7), "{}", report.summary());
     assert_eq!(
         counts.get(&Status::Unmapped),
-        Some(&713),
+        Some(&712),
         "{}",
         report.summary()
     );
@@ -79,17 +86,23 @@ fn the_counts_are_pinned() {
 
 /// Every definition `frnsc-artifacts` maps to an `Artifact` is either covered or a gap. A
 /// mapped definition falling into `unmapped` would mean the report lost it.
+///
+/// The converse does not hold: a parser can declare `Requirement::Artifact` for a definition
+/// `frnsc-artifacts` has no `Artifact` mapping for (`WindowsXMLEventLogTerminalServices` — see
+/// `frnsc_winevt::parser`'s own docs on why `WindowsEvents` has no variant for it), which rescues
+/// it to `Parser` without ever being "mapped".
 #[test]
 fn mapped_definitions_are_never_unmapped() {
     for row in report().rows {
         let mapped = frnsc_artifacts::MAPPED_DEFINITIONS.contains(&row.definition.as_str());
-        assert_eq!(
-            mapped,
-            row.status != Status::Unmapped,
-            "{}: mapped={mapped}, status={}",
-            row.definition,
-            row.status.as_str()
-        );
+        if mapped {
+            assert_ne!(
+                row.status,
+                Status::Unmapped,
+                "{}: mapped but reported unmapped",
+                row.definition
+            );
+        }
         assert_eq!(mapped, row.artifact.is_some(), "{}", row.definition);
     }
 }
@@ -111,15 +124,27 @@ fn the_parser_column_agrees_with_the_status() {
     }
 }
 
-/// Until roadmap phase 4, coverage is inferred from the output artifact. That is a heuristic,
-/// and this pin is what makes its removal visible.
+/// Until roadmap phase 4, most coverage is inferred from the output artifact rather than a
+/// parser's own `Requirement::Artifact` declaration — a heuristic, and this pin is what makes its
+/// removal visible. FOR-5's `windows.evtx`/`windows.srum` are the first two parsers to declare
+/// their definitions outright, so their rows are the exception: `Declared`, not `Inferred`.
 #[test]
 fn coverage_is_inferred_until_the_parsers_declare_their_definitions() {
     let report = report();
-    assert_eq!(report.covering_counts().get("declared"), Some(&0));
+    assert_eq!(report.covering_counts().get("declared"), Some(&7));
     assert_eq!(report.covering_counts().get("inferred"), Some(&6));
+    let declared: Vec<&str> = frnsc_winevt::parser::DEFINITIONS
+        .iter()
+        .copied()
+        .chain([frnsc_esedb::srum::parser::DEFINITION])
+        .collect();
     for row in report.rows.iter().filter(|r| r.status == Status::Parser) {
-        assert_eq!(row.covering, Some(Covering::Inferred), "{}", row.definition);
+        let expected = if declared.contains(&row.definition.as_str()) {
+            Covering::Declared
+        } else {
+            Covering::Inferred
+        };
+        assert_eq!(row.covering, Some(expected), "{}", row.definition);
     }
 }
 
@@ -147,6 +172,18 @@ fn a_definition_names_the_crate_that_reads_its_format() {
             "windows.prefetch",
         ),
         ("NTFSMFTFiles", "ntfs", "frnsc-ntfs", "windows.ntfs.mft"),
+        (
+            "WindowsXMLEventLogSecurity",
+            "evtx",
+            "frnsc-winevt",
+            "windows.evtx",
+        ),
+        (
+            "WindowsSystemResourceUsageMonitorDatabaseFile",
+            "esedb",
+            "frnsc-esedb",
+            "windows.srum",
+        ),
     ] {
         let r = row(definition);
         assert_eq!((r.format, r.reader), (format, reader), "{definition}");
@@ -154,19 +191,10 @@ fn a_definition_names_the_crate_that_reads_its_format() {
         assert_eq!(r.status, Status::Parser, "{definition}");
     }
     // A gap still names the crate that would host the factory.
-    for (definition, format, reader) in [
-        ("WindowsXMLEventLogSecurity", "evtx", "frnsc-winevt"),
-        (
-            "WindowsSystemResourceUsageMonitorDatabaseFile",
-            "esedb",
-            "frnsc-esedb",
-        ),
-        ("WindowsRunKeys", "regf", "frnsc-hive"),
-    ] {
-        let r = row(definition);
-        assert_eq!((r.format, r.reader), (format, reader), "{definition}");
-        assert_eq!(r.status, Status::Gap, "{definition}");
-    }
+    let (definition, format, reader) = ("WindowsRunKeys", "regf", "frnsc-hive");
+    let r = row(definition);
+    assert_eq!((r.format, r.reader), (format, reader), "{definition}");
+    assert_eq!(r.status, Status::Gap, "{definition}");
     // Nothing reads a format we have no crate for, and nothing is guessed from a path.
     assert_eq!(row("WindowsSearchDatabaseFile").format, "-");
     // A definition spanning two container formats names neither. `WindowsScheduledTasks` is
@@ -202,8 +230,13 @@ fn an_inferred_row_is_marked_as_inferred_in_the_table() {
     let firefox = line("FirefoxHistory");
     assert!(firefox.contains("inferred"), "{firefox}");
     assert!(firefox.contains("windows.browser_history"), "{firefox}");
+    // A parser naming the definition itself (FOR-5's `windows.evtx`) is marked `declared`, not
+    // `inferred`: the row is a fact the parser stated, not this report's guess.
+    let evtx = line("WindowsXMLEventLogSecurity");
+    assert!(evtx.contains("declared"), "{evtx}");
+    assert!(!evtx.contains("inferred"), "{evtx}");
     // A gap is not marked either way.
-    let gap = line("WindowsXMLEventLogSecurity");
+    let gap = line("WindowsRunKeys");
     assert!(!gap.contains("inferred"), "{gap}");
     assert!(!gap.contains("declared"), "{gap}");
 
@@ -277,7 +310,7 @@ fn the_table_carries_the_kb_commit_and_the_counts() {
         .to_table();
     assert!(table.contains(frnsc_artifacts::KB_COMMIT), "{table:.200}");
     assert!(
-        table.contains("732 definitions: 6 parser, 13 gap, 713 unmapped"),
+        table.contains("732 definitions: 13 parser, 7 gap, 712 unmapped"),
         "{}",
         table.lines().last().unwrap_or_default()
     );
