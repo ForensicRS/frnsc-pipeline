@@ -63,7 +63,7 @@ fn rows_are_sorted_by_definition_name() {
 /// `Artifact::Linux(LinuxArtifacts::Utmp)`. All four were `Unmapped` (no Linux parser existed
 /// before this), so `Gap` is unchanged.
 ///
-/// FOR-27/FOR-29/FOR-30/FOR-33-ish and FOR-32 (2026-09-30, same heartbeat window) moved 44 more
+/// FOR-27/FOR-29/FOR-33-ish and FOR-32 (2026-09-30, same heartbeat window) moved 44 more
 /// definitions from unmapped to parser, all `Declared` — every one of the new `frnsc_linux`
 /// parsers names its own definitions outright:
 /// `log::syslog::SyslogParserFactory`, `log::audit::AuditParserFactory`,
@@ -73,20 +73,28 @@ fn rows_are_sorted_by_definition_name() {
 /// `schedule::ScheduleParserFactory`, `units::UnitsParserFactory` and
 /// `identity::IdentityParserFactory`. `Gap` is unchanged: none of these definitions had an
 /// `output_artifact` mapping with no parser before now, so none were ever `Gap`.
+///
+/// FOR-33's separate KB regeneration (`frnsc-artifacts` @ `bf9bded`) added 2 new upstream
+/// definitions, both landing as `Unmapped` (bumping `DEFINITION_COUNT` 732 -> 734 without moving
+/// the `Parser`/`Gap` counts on its own).
+///
+/// FOR-30 (2026-09-30) moves one more definition from unmapped to parser, `Declared`:
+/// `journal::parser::JournalParserFactory` declares `LinuxSystemdJournalLogs`, now mapped to
+/// `Artifact::Linux(LinuxArtifacts::Journal)`. `Gap` is unchanged, for the same reason as above.
 #[test]
 fn the_counts_are_pinned() {
     let report = report();
     let counts = report.counts();
     assert_eq!(
         counts.get(&Status::Parser),
-        Some(&65),
+        Some(&66),
         "{}",
         report.summary()
     );
     assert_eq!(counts.get(&Status::Gap), Some(&7), "{}", report.summary());
     assert_eq!(
         counts.get(&Status::Unmapped),
-        Some(&660),
+        Some(&661),
         "{}",
         report.summary()
     );
@@ -145,13 +153,14 @@ fn the_parser_column_agrees_with_the_status() {
 /// parser's own `Requirement::Artifact` declaration — a heuristic, and this pin is what makes its
 /// removal visible. FOR-5's `windows.evtx`/`windows.srum`, FOR-28's `linux.utmp`, the text-log/
 /// shell/package family (`linux.syslog`, `linux.audit`, `linux.shell_history`,
-/// `linux.packages`) and FOR-32's config/state family (`linux.accounts`, `linux.ssh`,
-/// `linux.schedule`, `linux.units`, `linux.identity`) are the parsers that declare their
-/// definitions outright, so their rows are the exception: `Declared`, not `Inferred`.
+/// `linux.packages`), FOR-32's config/state family (`linux.accounts`, `linux.ssh`,
+/// `linux.schedule`, `linux.units`, `linux.identity`) and FOR-30's `linux.journal` are the parsers
+/// that declare their definitions outright, so their rows are the exception: `Declared`, not
+/// `Inferred`.
 #[test]
 fn coverage_is_inferred_until_the_parsers_declare_their_definitions() {
     let report = report();
-    assert_eq!(report.covering_counts().get("declared"), Some(&58));
+    assert_eq!(report.covering_counts().get("declared"), Some(&59));
     assert_eq!(report.covering_counts().get("inferred"), Some(&7));
     let declared: Vec<&str> = frnsc_winevt::parser::DEFINITIONS
         .iter()
@@ -167,6 +176,7 @@ fn coverage_is_inferred_until_the_parsers_declare_their_definitions() {
         .chain(frnsc_linux::schedule::DEFINITIONS.iter().copied())
         .chain(frnsc_linux::units::DEFINITIONS.iter().copied())
         .chain(frnsc_linux::identity::DEFINITIONS.iter().copied())
+        .chain(frnsc_linux::journal::parser::DEFINITIONS.iter().copied())
         .collect();
     for row in report.rows.iter().filter(|r| r.status == Status::Parser) {
         let expected = if declared.contains(&row.definition.as_str()) {
@@ -340,7 +350,7 @@ fn the_table_carries_the_kb_commit_and_the_counts() {
         .to_table();
     assert!(table.contains(frnsc_artifacts::KB_COMMIT), "{table:.200}");
     assert!(
-        table.contains("732 definitions: 65 parser, 7 gap, 660 unmapped"),
+        table.contains("734 definitions: 66 parser, 7 gap, 661 unmapped"),
         "{}",
         table.lines().last().unwrap_or_default()
     );

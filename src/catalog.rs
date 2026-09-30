@@ -118,6 +118,7 @@ impl Catalog {
             CatalogEntry::parser("frnsc-linux", frnsc_linux::schedule::ScheduleParserFactory::new()),
             CatalogEntry::parser("frnsc-linux", frnsc_linux::units::UnitsParserFactory::new()),
             CatalogEntry::parser("frnsc-linux", frnsc_linux::identity::IdentityParserFactory::new()),
+            CatalogEntry::parser("frnsc-linux", frnsc_linux::journal::JournalParserFactory::new()),
             // Formats that yield a FileSystem: these are what images, partitions and embedded
             // containers are opened with.
             CatalogEntry::format("forensic-rs", SplitRawFactory::new()),
