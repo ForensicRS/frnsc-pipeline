@@ -109,6 +109,15 @@ impl Catalog {
             CatalogEntry::parser("frnsc-winevt", frnsc_winevt::EvtxParserFactory::new()),
             CatalogEntry::parser("frnsc-esedb", frnsc_esedb::srum::SrumParserFactory::new()),
             CatalogEntry::parser("frnsc-linux", frnsc_linux::unix::utmp::UtmpParserFactory::new()),
+            CatalogEntry::parser("frnsc-linux", frnsc_linux::log::syslog::SyslogParserFactory::new()),
+            CatalogEntry::parser("frnsc-linux", frnsc_linux::log::audit::AuditParserFactory::new()),
+            CatalogEntry::parser("frnsc-linux", frnsc_linux::shell::ShellHistoryParserFactory::new()),
+            CatalogEntry::parser("frnsc-linux", frnsc_linux::packages::PackagesParserFactory::new()),
+            CatalogEntry::parser("frnsc-linux", frnsc_linux::unix::accounts::AccountsParserFactory::new()),
+            CatalogEntry::parser("frnsc-linux", frnsc_linux::unix::ssh::SshParserFactory::new()),
+            CatalogEntry::parser("frnsc-linux", frnsc_linux::schedule::ScheduleParserFactory::new()),
+            CatalogEntry::parser("frnsc-linux", frnsc_linux::units::UnitsParserFactory::new()),
+            CatalogEntry::parser("frnsc-linux", frnsc_linux::identity::IdentityParserFactory::new()),
             // Formats that yield a FileSystem: these are what images, partitions and embedded
             // containers are opened with.
             CatalogEntry::format("forensic-rs", SplitRawFactory::new()),

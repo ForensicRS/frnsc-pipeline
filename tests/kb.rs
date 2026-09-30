@@ -62,20 +62,31 @@ fn rows_are_sorted_by_definition_name() {
 /// `LinuxWtmp` and `UnixUtmpFile`, and `frnsc_artifacts::output_artifact` now maps all four to
 /// `Artifact::Linux(LinuxArtifacts::Utmp)`. All four were `Unmapped` (no Linux parser existed
 /// before this), so `Gap` is unchanged.
+///
+/// FOR-27/FOR-29/FOR-30/FOR-33-ish and FOR-32 (2026-09-30, same heartbeat window) moved 44 more
+/// definitions from unmapped to parser, all `Declared` — every one of the new `frnsc_linux`
+/// parsers names its own definitions outright:
+/// `log::syslog::SyslogParserFactory`, `log::audit::AuditParserFactory`,
+/// `shell::ShellHistoryParserFactory` and `packages::PackagesParserFactory` (the text-log and
+/// shell-history/package family), and FOR-32's config/state family —
+/// `unix::accounts::AccountsParserFactory`, `unix::ssh::SshParserFactory`,
+/// `schedule::ScheduleParserFactory`, `units::UnitsParserFactory` and
+/// `identity::IdentityParserFactory`. `Gap` is unchanged: none of these definitions had an
+/// `output_artifact` mapping with no parser before now, so none were ever `Gap`.
 #[test]
 fn the_counts_are_pinned() {
     let report = report();
     let counts = report.counts();
     assert_eq!(
         counts.get(&Status::Parser),
-        Some(&17),
+        Some(&65),
         "{}",
         report.summary()
     );
     assert_eq!(counts.get(&Status::Gap), Some(&7), "{}", report.summary());
     assert_eq!(
         counts.get(&Status::Unmapped),
-        Some(&708),
+        Some(&660),
         "{}",
         report.summary()
     );
@@ -132,19 +143,30 @@ fn the_parser_column_agrees_with_the_status() {
 
 /// Until roadmap phase 4, most coverage is inferred from the output artifact rather than a
 /// parser's own `Requirement::Artifact` declaration — a heuristic, and this pin is what makes its
-/// removal visible. FOR-5's `windows.evtx`/`windows.srum` and FOR-28's `linux.utmp` are the
-/// parsers that declare their definitions outright, so their rows are the exception: `Declared`,
-/// not `Inferred`.
+/// removal visible. FOR-5's `windows.evtx`/`windows.srum`, FOR-28's `linux.utmp`, the text-log/
+/// shell/package family (`linux.syslog`, `linux.audit`, `linux.shell_history`,
+/// `linux.packages`) and FOR-32's config/state family (`linux.accounts`, `linux.ssh`,
+/// `linux.schedule`, `linux.units`, `linux.identity`) are the parsers that declare their
+/// definitions outright, so their rows are the exception: `Declared`, not `Inferred`.
 #[test]
 fn coverage_is_inferred_until_the_parsers_declare_their_definitions() {
     let report = report();
-    assert_eq!(report.covering_counts().get("declared"), Some(&11));
-    assert_eq!(report.covering_counts().get("inferred"), Some(&6));
+    assert_eq!(report.covering_counts().get("declared"), Some(&58));
+    assert_eq!(report.covering_counts().get("inferred"), Some(&7));
     let declared: Vec<&str> = frnsc_winevt::parser::DEFINITIONS
         .iter()
         .copied()
         .chain([frnsc_esedb::srum::parser::DEFINITION])
         .chain(frnsc_linux::unix::utmp::DEFINITIONS.iter().copied())
+        .chain(frnsc_linux::log::syslog::DEFINITIONS.iter().copied())
+        .chain(frnsc_linux::log::audit::DEFINITIONS.iter().copied())
+        .chain(frnsc_linux::shell::DEFINITIONS.iter().copied())
+        .chain(frnsc_linux::packages::DEFINITIONS.iter().copied())
+        .chain(frnsc_linux::unix::accounts::DEFINITIONS.iter().copied())
+        .chain(frnsc_linux::unix::ssh::DEFINITIONS.iter().copied())
+        .chain(frnsc_linux::schedule::DEFINITIONS.iter().copied())
+        .chain(frnsc_linux::units::DEFINITIONS.iter().copied())
+        .chain(frnsc_linux::identity::DEFINITIONS.iter().copied())
         .collect();
     for row in report.rows.iter().filter(|r| r.status == Status::Parser) {
         let expected = if declared.contains(&row.definition.as_str()) {
@@ -318,7 +340,7 @@ fn the_table_carries_the_kb_commit_and_the_counts() {
         .to_table();
     assert!(table.contains(frnsc_artifacts::KB_COMMIT), "{table:.200}");
     assert!(
-        table.contains("732 definitions: 17 parser, 7 gap, 708 unmapped"),
+        table.contains("732 definitions: 65 parser, 7 gap, 660 unmapped"),
         "{}",
         table.lines().last().unwrap_or_default()
     );
