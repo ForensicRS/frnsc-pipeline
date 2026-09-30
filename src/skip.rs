@@ -72,7 +72,10 @@ pub struct SkippedParser {
 /// returned `false`, or `open` failed). Checked in the same order `can_parse` implementations
 /// in this workspace check them (see `frnsc-winevt`/`frnsc-esedb`'s `can_parse`): a missing
 /// filesystem before a missing catalog, because with no filesystem at all a missing catalog is
-/// not the interesting fact.
+/// not the interesting fact. A missing registry backend gets the same treatment, but only when a
+/// declared definition actually needs one (`REGISTRY_KEY`/`REGISTRY_VALUE` sources) — unlike the
+/// filesystem, most definitions in this catalog today are file-only, so a registry-less source is
+/// the normal case and must not be blamed for them.
 pub fn classify(descriptor: &ParserDescriptor, sources: &TriageSources) -> (SkipReason, String) {
     let declared: Vec<&str> = kb::artifact_requirements(descriptor).collect();
     if declared.is_empty() {
@@ -105,6 +108,40 @@ pub fn classify(descriptor: &ParserDescriptor, sources: &TriageSources) -> (Skip
             SkipReason::UnknownDefinition,
             format!("catalog does not know: {}", unknown.join(", ")),
         );
+    }
+
+    // Mirrors the `vfs` guard above: a definition that can only resolve through the registry
+    // (`REGISTRY_KEY`/`REGISTRY_VALUE`) looks identical to "genuinely absent" once resolved —
+    // `resolve_expansion` records the missing backend as a note, not an error, and an
+    // `ArtifactResolution` with nothing found either way has empty `files`/`keys`/`values`. Ask
+    // first, the same way the vfs guard does, instead of trusting a result that cannot tell the
+    // two apart.
+    if sources.registry().is_none() {
+        let needs_registry: Vec<&str> = declared
+            .iter()
+            .filter(|name| {
+                catalog.get(name).is_some_and(|def| {
+                    def.sources.iter().any(|s| {
+                        matches!(
+                            s.source,
+                            ArtifactSource::RegistryKey { .. } | ArtifactSource::RegistryValue { .. }
+                        )
+                    })
+                })
+            })
+            .copied()
+            .collect();
+        if !needs_registry.is_empty() {
+            return (
+                SkipReason::Declined,
+                format!(
+                    "no registry attached to this source; {} declared definition(s) can only \
+                     resolve through the registry: {}",
+                    needs_registry.len(),
+                    needs_registry.join(", ")
+                ),
+            );
+        }
     }
 
     let ctx = ParseContext::new(
@@ -220,5 +257,38 @@ mod tests {
             .build();
         let (reason, detail) = classify(&descriptor, &sources);
         assert_eq!(reason, SkipReason::Declined, "{detail}");
+    }
+
+    /// `WindowsActiveDesktop` (`frnsc-artifacts`) resolves only through `REGISTRY_KEY` sources,
+    /// no file globs at all. With a filesystem attached but no registry, `resolve_artifact` would
+    /// find nothing and no read error either — indistinguishable from "genuinely absent" unless
+    /// `classify` asks about the missing backend first, the same way it already does for `vfs`.
+    #[test]
+    fn declined_when_a_registry_only_definition_has_no_registry_attached() {
+        let descriptor = ParserDescriptor::new("test.parser", "Test", "", "1.0")
+            .with_requirements(vec![Requirement::artifact("WindowsActiveDesktop")]);
+        let sources = TriageSources::builder()
+            .vfs(Arc::new(InMemoryVirtualFileSystem::new()))
+            .catalog(frnsc_artifacts::catalog())
+            .build();
+        assert!(sources.registry().is_none());
+        let (reason, detail) = classify(&descriptor, &sources);
+        assert_eq!(reason, SkipReason::Declined, "{detail}");
+        assert!(detail.contains("no registry attached"), "{detail}");
+    }
+
+    /// A file-based definition must not be blamed for a missing registry it never needed: the
+    /// registry guard only fires for declared definitions that actually have
+    /// `REGISTRY_KEY`/`REGISTRY_VALUE` sources.
+    #[test]
+    fn artifact_absent_still_reachable_with_no_registry_for_a_file_only_definition() {
+        let sources = TriageSources::builder()
+            .vfs(Arc::new(InMemoryVirtualFileSystem::new()))
+            .catalog(frnsc_artifacts::catalog())
+            .build();
+        assert!(sources.registry().is_none());
+        let parser = frnsc_winevt::EvtxParserFactory::new();
+        let (reason, detail) = classify(parser.descriptor(), &sources);
+        assert_eq!(reason, SkipReason::ArtifactAbsent, "{detail}");
     }
 }

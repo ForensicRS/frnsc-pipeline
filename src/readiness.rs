@@ -351,6 +351,12 @@ fn garbage(runs: &[(&Corpus, Result<Observed, String>)]) -> CheckResult {
 /// with a per-corpus reason classified the same way [`crate::run`] classifies a run summary's
 /// `parsers_skipped`: a corpus that never attached a catalog reads as `no_catalog`, not
 /// `artifact_absent` — the exact confusion FOR-22 exists to remove from this report too.
+///
+/// [`skip::classify`] answers "why didn't the parser run", so it is only consulted when the
+/// parser actually didn't run ([`Observed::skipped`]). A corpus the parser ran against and that
+/// legitimately produced zero records (a syntactically valid but event-less `.evtx`, say) is a
+/// different, unrelated fact — reported as such, not run back through `classify`, which has no
+/// way to tell that case apart from a real skip and would misreport it as `declined`.
 fn coverage(
     descriptor: &ParserDescriptor,
     runs: &[(&Corpus, Result<Observed, String>)],
@@ -382,10 +388,11 @@ fn coverage(
         .iter()
         .map(|(c, r)| match r {
             Err(panic) => format!("{}: run failed ({panic})", c.name),
-            Ok(_) => {
+            Ok(o) if o.skipped => {
                 let (reason, detail) = skip::classify(descriptor, &c.sources);
                 format!("{}: {reason} ({detail})", c.name)
             }
+            Ok(_) => format!("{}: ran to completion, emitted no records", c.name),
         })
         .collect();
     CheckResult::new("coverage", Outcome::Skip, reasons.join("; "))
@@ -574,6 +581,10 @@ struct Observed {
     errors: usize,
     emitted_after_stop: u64,
     store: ProvenanceStore,
+    /// Whether the pipeline reported the parser as skipped rather than run. `observe` always
+    /// builds a single-parser pipeline, so [`forensic_rs::pipeline::PipelineResult::parsers_skipped`]
+    /// is non-empty only when this parser itself was the one skipped.
+    skipped: bool,
 }
 
 impl Observed {
@@ -621,6 +632,7 @@ fn observe(
             errors: result.errors.len(),
             emitted_after_stop: 0,
             store,
+            skipped: !result.parsers_skipped.is_empty(),
         })
     }));
     match caught {
@@ -818,5 +830,78 @@ impl ReadinessMatrix {
             }
         }
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use forensic_rs::prelude::testing::InMemoryVirtualFileSystem;
+
+    fn observed(records: Vec<ForensicData>, skipped: bool) -> Observed {
+        Observed {
+            record_lines: records.iter().map(json).collect(),
+            finding_lines: Vec::new(),
+            records,
+            errors: 0,
+            emitted_after_stop: 0,
+            store: ProvenanceStore::new(),
+            skipped,
+        }
+    }
+
+    fn valid_corpus(sources: TriageSources) -> Corpus {
+        Corpus {
+            name: "valid".into(),
+            kind: CorpusKind::Valid,
+            sources,
+        }
+    }
+
+    /// Regression pin for FOR-23's review finding 1: a parser that actually ran and legitimately
+    /// produced zero records must not be run back through `skip::classify`, which only knows how
+    /// to explain a genuine skip and would otherwise misreport a clean empty run as `declined`.
+    #[test]
+    fn coverage_reports_a_legitimately_empty_run_without_consulting_classify() {
+        let descriptor = ParserDescriptor::new("test.parser", "Test", "", "1.0")
+            .with_requirements(vec![Requirement::artifact("WindowsXMLEventLogSecurity")]);
+        let sources = TriageSources::builder()
+            .vfs(Arc::new(InMemoryVirtualFileSystem::new()))
+            .catalog(frnsc_artifacts::catalog())
+            .build();
+        let corpus = valid_corpus(sources);
+        let runs = vec![(&corpus, Ok(observed(Vec::new(), false)))];
+
+        let result = coverage(&descriptor, &runs);
+
+        assert_eq!(result.outcome, Outcome::Skip);
+        assert!(
+            result.detail.contains("ran to completion"),
+            "{}",
+            result.detail
+        );
+        assert!(
+            !result.detail.contains("declined") && !result.detail.contains("no_catalog"),
+            "a run that actually executed must not be attributed a skip reason: {}",
+            result.detail
+        );
+    }
+
+    /// The companion case: when the parser genuinely was skipped, `coverage` still defers to
+    /// `skip::classify` for the reason.
+    #[test]
+    fn coverage_still_classifies_a_genuine_skip() {
+        let descriptor = ParserDescriptor::new("test.parser", "Test", "", "1.0")
+            .with_requirements(vec![Requirement::artifact("WindowsXMLEventLogSecurity")]);
+        let sources = TriageSources::builder()
+            .vfs(Arc::new(InMemoryVirtualFileSystem::new()))
+            .build();
+        let corpus = valid_corpus(sources);
+        let runs = vec![(&corpus, Ok(observed(Vec::new(), true)))];
+
+        let result = coverage(&descriptor, &runs);
+
+        assert_eq!(result.outcome, Outcome::Skip);
+        assert!(result.detail.contains("no_catalog"), "{}", result.detail);
     }
 }
