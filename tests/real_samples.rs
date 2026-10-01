@@ -272,6 +272,23 @@ fn a_real_system_hive_is_read_through_hklm_and_current_control_set() {
     // reader used to follow its unset subkeys-list offset).
     let missing = registry.key(r"HKLM\SYSTEM\Select\NoSuchKey").unwrap_err();
     assert!(missing.is_registry_not_found(), "{missing:?}");
+    // AppCompatCache is larger than one cell holds: a big-data record, reassembled. The reader
+    // used to return the record's 12-byte header as the value.
+    let cache = registry
+        .value(
+            r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\AppCompatCache",
+            "AppCompatCache",
+        )
+        .unwrap();
+    let forensic_rs::prelude::RegValue::Binary(cache) = cache else {
+        panic!("{cache:?}");
+    };
+    assert_eq!(cache.len(), 56_256);
+    assert_eq!(
+        cache[..4],
+        0xbadc_0fee_u32.to_le_bytes(),
+        "the Windows 7 cache signature"
+    );
     // Value names compare case-insensitively, as in Windows.
     assert_eq!(
         registry
