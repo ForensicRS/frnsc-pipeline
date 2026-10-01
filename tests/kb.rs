@@ -4,7 +4,8 @@
 //! change in either direction has to be a deliberate edit here, with a line in the status log.
 
 use forensic_rs::catalog::{ArtifactCatalog, Os};
-use frnsc_pipeline::catalog::Catalog;
+use forensic_rs::prelude::*;
+use frnsc_pipeline::catalog::{Catalog, CatalogEntry, Component};
 use frnsc_pipeline::kb::{Covering, KbReport, Status};
 
 fn report() -> KbReport {
@@ -94,17 +95,21 @@ fn rows_are_sorted_by_definition_name() {
 /// and `VivaldiBrowserHistoryDatabaseFile`, both mapped to `BrowserHistory` and declared by
 /// `frnsc_sqlite`'s `BrowserHistoryParserFactory`, so both land as `Parser` (71 -> 73, 734 ->
 /// 736). `Gap` and `Unmapped` are unchanged.
+///
+/// The same phase stops crediting a parser by inference once it names its definitions, so
+/// `FirefoxHistory`, which only shared `BrowserHistory` with what `windows.browser_history`
+/// reads, falls from `Parser` to `Gap` (73 -> 72 parser, 7 -> 8 gap; 72 + 8 + 656 = 736).
 #[test]
 fn the_counts_are_pinned() {
     let report = report();
     let counts = report.counts();
     assert_eq!(
         counts.get(&Status::Parser),
-        Some(&73),
+        Some(&72),
         "{}",
         report.summary()
     );
-    assert_eq!(counts.get(&Status::Gap), Some(&7), "{}", report.summary());
+    assert_eq!(counts.get(&Status::Gap), Some(&8), "{}", report.summary());
     assert_eq!(
         counts.get(&Status::Unmapped),
         Some(&656),
@@ -163,51 +168,25 @@ fn the_parser_column_agrees_with_the_status() {
     }
 }
 
-/// Until roadmap phase 4, most coverage is inferred from the output artifact rather than a
-/// parser's own `Requirement::Artifact` declaration — a heuristic, and this pin is what makes its
-/// removal visible. FOR-5's `windows.evtx`/`windows.srum`, FOR-28's `linux.utmp`, the text-log/
-/// shell/package family (`linux.syslog`, `linux.audit`, `linux.shell_history`,
-/// `linux.packages`), FOR-32's config/state family (`linux.accounts`, `linux.ssh`,
-/// `linux.schedule`, `linux.units`, `linux.identity`), FOR-30's `linux.journal` and FOR-33's
-/// `linux.containers` are the parsers that declare their definitions outright, so their rows are
-/// the exception: `Declared`, not `Inferred`. Roadmap phase 4 adds `windows.prefetch`,
-/// `windows.amcache` and `windows.browser_history` (64 -> 69 declared: their three existing
-/// definitions move from inferred, plus the two new local browser definitions; 7 -> 4 inferred).
+/// Roadmap phase 4 made every covering parser in the standard catalog name its definitions, so
+/// no row is inferred any more: every `Parser` row is `Declared`, by name or as a member of a
+/// group a parser names (`linux.identity` declares `LinuxReleaseInfo`, which reaches
+/// `LinuxLSBRelease`). A new parser that declares only an `Artifact` would bring inference
+/// back, visibly, here.
 #[test]
 fn coverage_is_inferred_until_the_parsers_declare_their_definitions() {
     let report = report();
-    assert_eq!(report.covering_counts().get("declared"), Some(&69));
-    assert_eq!(report.covering_counts().get("inferred"), Some(&4));
-    let declared: Vec<&str> = frnsc_winevt::parser::DEFINITIONS
-        .iter()
-        .copied()
-        .chain([frnsc_esedb::srum::parser::DEFINITION])
-        .chain(frnsc_linux::unix::utmp::DEFINITIONS.iter().copied())
-        .chain(frnsc_linux::log::syslog::DEFINITIONS.iter().copied())
-        .chain(frnsc_linux::log::audit::DEFINITIONS.iter().copied())
-        .chain(frnsc_linux::shell::DEFINITIONS.iter().copied())
-        .chain(frnsc_linux::packages::DEFINITIONS.iter().copied())
-        .chain(frnsc_linux::unix::accounts::DEFINITIONS.iter().copied())
-        .chain(frnsc_linux::unix::ssh::DEFINITIONS.iter().copied())
-        .chain(frnsc_linux::schedule::DEFINITIONS.iter().copied())
-        .chain(frnsc_linux::units::DEFINITIONS.iter().copied())
-        .chain(frnsc_linux::identity::DEFINITIONS.iter().copied())
-        .chain(frnsc_linux::journal::parser::DEFINITIONS.iter().copied())
-        .chain(frnsc_linux::containers::DEFINITIONS.iter().copied())
-        .chain([
-            frnsc_prefetch::parser::DEFINITION,
-            frnsc_amcache::parser::DEFINITION,
-        ])
-        .chain(frnsc_sqlite::artifacts::parser::DEFINITIONS.iter().copied())
-        .collect();
+    assert_eq!(report.covering_counts().get("declared"), Some(&72));
+    assert_eq!(report.covering_counts().get("inferred"), Some(&0));
     for row in report.rows.iter().filter(|r| r.status == Status::Parser) {
-        let expected = if declared.contains(&row.definition.as_str()) {
-            Covering::Declared
-        } else {
-            Covering::Inferred
-        };
-        assert_eq!(row.covering, Some(expected), "{}", row.definition);
+        assert_eq!(row.covering, Some(Covering::Declared), "{}", row.definition);
     }
+    let lsb = report
+        .rows
+        .iter()
+        .find(|r| r.definition == "LinuxLSBRelease")
+        .unwrap();
+    assert_eq!(lsb.parser, "linux.identity", "declared through its group");
 }
 
 #[test]
@@ -276,22 +255,37 @@ fn a_definition_names_the_crate_that_reads_its_format() {
 }
 
 /// The table must say whether a `parser` column is the parser's own declaration or this report's
-/// inference. Without it, `FirefoxHistory` reads as "Firefox history is parsed" — it is not:
-/// frnsc-sqlite declares the generic `BrowserHistory` artifact and reads only the Chromium
-/// schema (FINDINGS, closed by phase 4).
+/// inference. Without it, an inferred row reads as "this is parsed" when the report only guessed
+/// it from a shared `Artifact` — `FirefoxHistory` did, until phase 4: frnsc-sqlite's
+/// `windows.browser_history` declares the generic `BrowserHistory` artifact and reads only the
+/// Chromium schema.
 #[test]
 fn an_inferred_row_is_marked_as_inferred_in_the_table() {
     let table = report().to_table();
-    let line = |name: &str| {
+    let line = |table: &str, name: &str| {
         table
             .lines()
             .find(|l| l.split_whitespace().last() == Some(name))
             .unwrap_or_else(|| panic!("{name} has no line"))
             .to_string()
     };
-    let firefox = line("FirefoxHistory");
+    // Now that `windows.browser_history` names its definitions, Firefox is the gap it really is.
+    let firefox = line(&table, "FirefoxHistory");
+    assert!(firefox.starts_with("gap"), "{firefox}");
+    assert!(!firefox.contains("windows.browser_history"), "{firefox}");
+
+    // A parser that names no definition, only an `Artifact`, is still credited by inference, and
+    // the row says so.
+    let only_artifact = Catalog::from_entries(vec![CatalogEntry {
+        crate_name: "test",
+        component: Component::Parser(std::sync::Arc::new(ArtifactOnlyParser::default())),
+    }]);
+    let inferred = KbReport::build(&only_artifact, &frnsc_artifacts::CATALOG).to_table();
+    let firefox = line(&inferred, "FirefoxHistory");
     assert!(firefox.contains("inferred"), "{firefox}");
-    assert!(firefox.contains("windows.browser_history"), "{firefox}");
+    assert!(firefox.contains("test.artifact_only"), "{firefox}");
+
+    let line = |name: &str| line(&table, name);
     // A parser naming the definition itself (FOR-5's `windows.evtx`) is marked `declared`, not
     // `inferred`: the row is a fact the parser stated, not this report's guess.
     let evtx = line("WindowsXMLEventLogSecurity");
@@ -372,7 +366,7 @@ fn the_table_carries_the_kb_commit_and_the_counts() {
         .to_table();
     assert!(table.contains(frnsc_artifacts::KB_COMMIT), "{table:.200}");
     assert!(
-        table.contains("736 definitions: 73 parser, 7 gap, 656 unmapped"),
+        table.contains("736 definitions: 72 parser, 8 gap, 656 unmapped"),
         "{}",
         table.lines().last().unwrap_or_default()
     );
@@ -381,4 +375,32 @@ fn the_table_carries_the_kb_commit_and_the_counts() {
         frnsc_artifacts::DEFINITION_COUNT + 3,
         "one line per definition, plus the KB header, the column header and the counts"
     );
+}
+
+/// A parser that declares the `BrowserHistory` artifact and no definition.
+struct ArtifactOnlyParser {
+    descriptor: ParserDescriptor,
+}
+
+impl Default for ArtifactOnlyParser {
+    fn default() -> Self {
+        Self {
+            descriptor: ParserDescriptor::new("test.artifact_only", "test", "test", "0")
+                .with_artifacts(vec![Artifact::Common(CommonArtifact::WebBrowsing(
+                    WebBrowsingArtifact::BrowserHistory,
+                ))]),
+        }
+    }
+}
+
+impl ArtifactParserFactory for ArtifactOnlyParser {
+    fn descriptor(&self) -> &ParserDescriptor {
+        &self.descriptor
+    }
+    fn can_parse(&self, _: &ParseContext<'_>) -> bool {
+        false
+    }
+    fn open(&self, _: &ParseContext<'_>) -> ForensicResult<ParserRun> {
+        Ok(ParserRun::pull(std::iter::empty()))
+    }
 }

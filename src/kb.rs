@@ -9,14 +9,13 @@
 //! only the first is authoritative:
 //!
 //! * [`Covering::Declared`] — a parser names the definition in
-//!   [`Requirement::Artifact`](forensic_rs::prelude::Requirement::Artifact). That is the
-//!   parser itself saying what it consumes.
-//! * [`Covering::Inferred`] — no parser names it, but one declares the
-//!   [`Artifact`] that [`frnsc_artifacts::output_artifact`] maps the definition to. This
-//!   over-claims when several definitions map to one artifact: `FirefoxHistory` and
-//!   `ChromiumBasedBrowsersHistoryDatabaseFile` both map to `BrowserHistory`, while
-//!   frnsc-sqlite only reads the Chromium schema. Roadmap phase 4 replaces every inferred
-//!   row with a declared one.
+//!   [`Requirement::Artifact`](forensic_rs::prelude::Requirement::Artifact), directly or as a
+//!   member of a group it names. That is the parser itself saying what it consumes.
+//! * [`Covering::Inferred`] — no parser names it, but one that declares no definition at all
+//!   declares the [`Artifact`] that [`frnsc_artifacts::output_artifact`] maps the definition
+//!   to. A parser that names its definitions is never credited with more by inference: that
+//!   over-claimed `FirefoxHistory` for frnsc-sqlite, which shares `BrowserHistory` with
+//!   `ChromiumBasedBrowsersHistoryDatabaseFile` but reads only the Chromium schema.
 //!
 //! Nothing here guesses: a definition with no mapping is [`Status::Unmapped`], not silently
 //! folded into a gap.
@@ -320,14 +319,7 @@ fn covering_parser(
     let mut declared: Vec<&str> = catalog
         .parsers()
         .filter(|(_, parser)| {
-            parser
-                .descriptor()
-                .requirements
-                .iter()
-                .any(|req| match req {
-                    Requirement::Artifact(a) => names(def).any(|name| name == a.name.as_ref()),
-                    _ => false,
-                })
+            declared_definitions(parser.descriptor()).any(|name| names_definition(name, def))
         })
         .map(|(_, parser)| parser.descriptor().id.as_ref())
         .collect();
@@ -341,10 +333,14 @@ fn covering_parser(
     let mut inferred: Vec<&str> = catalog
         .parsers()
         // `ParserDescriptor::handles` reads an empty `artifacts` as "every artifact". That is
-        // the right default for dispatch, but it is not coverage of this definition.
+        // the right default for dispatch, but it is not coverage of this definition. And a
+        // parser that names its definitions has said what it reads: crediting it with every
+        // other definition of the same artifact would be a guess.
         .filter(|(_, parser)| {
             let descriptor = parser.descriptor();
-            !descriptor.artifacts.is_empty() && descriptor.artifacts.contains(artifact)
+            !descriptor.artifacts.is_empty()
+                && descriptor.artifacts.contains(artifact)
+                && declared_definitions(descriptor).next().is_none()
         })
         .map(|(_, parser)| parser.descriptor().id.as_ref())
         .collect();
@@ -354,6 +350,38 @@ fn covering_parser(
         inferred.sort_unstable();
         Some((inferred.join("+"), Covering::Inferred))
     }
+}
+
+/// The definition names a parser declares with `Requirement::Artifact`.
+fn declared_definitions(descriptor: &ParserDescriptor) -> impl Iterator<Item = &str> {
+    descriptor.requirements.iter().filter_map(|req| match req {
+        Requirement::Artifact(a) => Some(a.name.as_ref()),
+        _ => None,
+    })
+}
+
+/// Whether the declared name `declared` is `def`, or a group of the KB with `def` among its
+/// members at any depth (`LinuxReleaseInfo` reaches `LinuxLSBRelease`). Cycles are cut.
+fn names_definition(declared: &str, def: &ArtifactDefinition) -> bool {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut stack = vec![declared.to_string()];
+    while let Some(name) = stack.pop() {
+        if names(def).any(|n| n == name) {
+            return true;
+        }
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let Some(group) = frnsc_artifacts::CATALOG.get(&name) else {
+            continue;
+        };
+        for entry in group.sources.iter() {
+            if let ArtifactSource::Group { names } = &entry.source {
+                stack.extend(names.iter().map(|n| n.to_string()));
+            }
+        }
+    }
+    false
 }
 
 /// The definition's name and every alias it answers to.
