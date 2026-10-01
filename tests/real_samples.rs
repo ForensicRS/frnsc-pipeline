@@ -297,6 +297,17 @@ fn a_real_system_hive_is_read_through_hklm_and_current_control_set() {
     );
     assert_eq!(entries.len(), 330);
     assert!(entries.iter().all(Result::is_ok));
+    // A REG_MULTI_SZ decodes to its strings (the reader returned Unknown { ty: 7 } before).
+    let group_order = registry
+        .value(
+            r"HKLM\SYSTEM\CurrentControlSet\Control\ServiceGroupOrder",
+            "List",
+        )
+        .unwrap();
+    let forensic_rs::prelude::RegValue::MultiSZ(groups) = group_order else {
+        panic!("{group_order:?}");
+    };
+    assert!(groups.iter().any(|g| g == "System Reserved"), "{groups:?}");
     // Value names compare case-insensitively, as in Windows.
     assert_eq!(
         registry
