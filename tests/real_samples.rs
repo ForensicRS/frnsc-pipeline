@@ -289,6 +289,14 @@ fn a_real_system_hive_is_read_through_hklm_and_current_control_set() {
         0xbadc_0fee_u32.to_le_bytes(),
         "the Windows 7 cache signature"
     );
+    // ... and it decodes whole: every entry of a real Windows 7 (32-bit) cache, no error.
+    let (format, entries) = frnsc_winreg_activity::shimcache::parse(&cache);
+    assert_eq!(
+        format,
+        Some(frnsc_winreg_activity::shimcache::Format::Windows7_32)
+    );
+    assert_eq!(entries.len(), 330);
+    assert!(entries.iter().all(Result::is_ok));
     // Value names compare case-insensitively, as in Windows.
     assert_eq!(
         registry

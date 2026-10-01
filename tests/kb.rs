@@ -99,17 +99,23 @@ fn rows_are_sorted_by_definition_name() {
 /// The same phase stops crediting a parser by inference once it names its definitions, so
 /// `FirefoxHistory`, which only shared `BrowserHistory` with what `windows.browser_history`
 /// reads, falls from `Parser` to `Gap` (73 -> 72 parser, 7 -> 8 gap; 72 + 8 + 656 = 736).
+///
+/// Roadmap phase 6 (2026-10-01): frnsc-winreg-activity's BAM, Run keys, Services and ShimCache
+/// parsers declare `WindowsBackgroundActivityModeratorKeys`, `WindowsRunKeys`, `WindowsServices`
+/// and `WindowsAppCompatCache`, all four mapped and so far gaps (72 -> 76 parser, 8 -> 4 gap;
+/// 76 + 4 + 656 = 736). The four gaps left are Firefox history, the ActivitiesCache, UAL and
+/// scheduled tasks.
 #[test]
 fn the_counts_are_pinned() {
     let report = report();
     let counts = report.counts();
     assert_eq!(
         counts.get(&Status::Parser),
-        Some(&72),
+        Some(&76),
         "{}",
         report.summary()
     );
-    assert_eq!(counts.get(&Status::Gap), Some(&8), "{}", report.summary());
+    assert_eq!(counts.get(&Status::Gap), Some(&4), "{}", report.summary());
     assert_eq!(
         counts.get(&Status::Unmapped),
         Some(&656),
@@ -176,7 +182,7 @@ fn the_parser_column_agrees_with_the_status() {
 #[test]
 fn coverage_is_inferred_until_the_parsers_declare_their_definitions() {
     let report = report();
-    assert_eq!(report.covering_counts().get("declared"), Some(&72));
+    assert_eq!(report.covering_counts().get("declared"), Some(&76));
     assert_eq!(report.covering_counts().get("inferred"), Some(&0));
     for row in report.rows.iter().filter(|r| r.status == Status::Parser) {
         assert_eq!(row.covering, Some(Covering::Declared), "{}", row.definition);
@@ -232,7 +238,7 @@ fn a_definition_names_the_crate_that_reads_its_format() {
         assert_eq!(r.status, Status::Parser, "{definition}");
     }
     // A gap still names the crate that would host the factory.
-    let (definition, format, reader) = ("WindowsRunKeys", "regf", "frnsc-hive");
+    let (definition, format, reader) = ("WindowsActivitiesCacheDatabase", "sqlite", "frnsc-sqlite");
     let r = row(definition);
     assert_eq!((r.format, r.reader), (format, reader), "{definition}");
     assert_eq!(r.status, Status::Gap, "{definition}");
@@ -292,7 +298,7 @@ fn an_inferred_row_is_marked_as_inferred_in_the_table() {
     assert!(evtx.contains("declared"), "{evtx}");
     assert!(!evtx.contains("inferred"), "{evtx}");
     // A gap is not marked either way.
-    let gap = line("WindowsRunKeys");
+    let gap = line("WindowsActivitiesCacheDatabase");
     assert!(!gap.contains("inferred"), "{gap}");
     assert!(!gap.contains("declared"), "{gap}");
 
@@ -366,7 +372,7 @@ fn the_table_carries_the_kb_commit_and_the_counts() {
         .to_table();
     assert!(table.contains(frnsc_artifacts::KB_COMMIT), "{table:.200}");
     assert!(
-        table.contains("736 definitions: 72 parser, 8 gap, 656 unmapped"),
+        table.contains("736 definitions: 76 parser, 4 gap, 656 unmapped"),
         "{}",
         table.lines().last().unwrap_or_default()
     );
