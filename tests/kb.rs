@@ -106,17 +106,20 @@ fn rows_are_sorted_by_definition_name() {
 /// 76 + 4 + 656 = 736). The four gaps left are Firefox history, the ActivitiesCache, UAL and
 /// scheduled tasks. Then the MountedDevices and WordWheelQuery parsers, whose definitions were
 /// unmapped: 76 -> 78 parser, 656 -> 654 unmapped (78 + 4 + 654 = 736).
+///
+/// Roadmap phase 7 (2026-10-01): frnsc-sqlite's `browser.firefox_history` declares
+/// `FirefoxHistory`, a gap until now: 78 -> 79 parser, 4 -> 3 gap (79 + 3 + 654 = 736).
 #[test]
 fn the_counts_are_pinned() {
     let report = report();
     let counts = report.counts();
     assert_eq!(
         counts.get(&Status::Parser),
-        Some(&78),
+        Some(&79),
         "{}",
         report.summary()
     );
-    assert_eq!(counts.get(&Status::Gap), Some(&4), "{}", report.summary());
+    assert_eq!(counts.get(&Status::Gap), Some(&3), "{}", report.summary());
     assert_eq!(
         counts.get(&Status::Unmapped),
         Some(&654),
@@ -183,7 +186,7 @@ fn the_parser_column_agrees_with_the_status() {
 #[test]
 fn coverage_is_inferred_until_the_parsers_declare_their_definitions() {
     let report = report();
-    assert_eq!(report.covering_counts().get("declared"), Some(&78));
+    assert_eq!(report.covering_counts().get("declared"), Some(&79));
     assert_eq!(report.covering_counts().get("inferred"), Some(&0));
     for row in report.rows.iter().filter(|r| r.status == Status::Parser) {
         assert_eq!(row.covering, Some(Covering::Declared), "{}", row.definition);
@@ -276,9 +279,11 @@ fn an_inferred_row_is_marked_as_inferred_in_the_table() {
             .unwrap_or_else(|| panic!("{name} has no line"))
             .to_string()
     };
-    // Now that `windows.browser_history` names its definitions, Firefox is the gap it really is.
+    // `windows.browser_history` names only Chromium definitions, so Firefox is credited to the
+    // parser that declares it, `browser.firefox_history`, and nothing else.
     let firefox = line(&table, "FirefoxHistory");
-    assert!(firefox.starts_with("gap"), "{firefox}");
+    assert!(firefox.contains("declared"), "{firefox}");
+    assert!(firefox.contains("browser.firefox_history"), "{firefox}");
     assert!(!firefox.contains("windows.browser_history"), "{firefox}");
 
     // A parser that names no definition, only an `Artifact`, is still credited by inference, and
@@ -373,7 +378,7 @@ fn the_table_carries_the_kb_commit_and_the_counts() {
         .to_table();
     assert!(table.contains(frnsc_artifacts::KB_COMMIT), "{table:.200}");
     assert!(
-        table.contains("736 definitions: 78 parser, 4 gap, 654 unmapped"),
+        table.contains("736 definitions: 79 parser, 3 gap, 654 unmapped"),
         "{}",
         table.lines().last().unwrap_or_default()
     );

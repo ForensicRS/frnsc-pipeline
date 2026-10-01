@@ -317,3 +317,17 @@ fn a_real_system_hive_is_read_through_hklm_and_current_control_set() {
         Some(current)
     );
 }
+
+/// plaso's real `places.sqlite` (Firefox, 2011): every place and visit reads, matching what
+/// sqlite3 itself counts (92 places, 1 visit), and it has no download annotations.
+#[test]
+fn a_real_firefox_places_database_reads_whole() {
+    use frnsc_sqlite::artifacts::firefox::{read_downloads, read_places, read_visits};
+    let places = artifact_or_skip!("sqlite-firefox-places");
+    let db = frnsc_sqlite::sqlite::db::SqliteDb::open(&places).unwrap();
+    assert_eq!(read_places(&db).unwrap().len(), 92);
+    let visits = read_visits(&db).unwrap();
+    assert_eq!(visits.len(), 1);
+    assert_eq!(visits[0].visit_type, Some(2));
+    assert!(read_downloads(&db).unwrap().is_empty());
+}
