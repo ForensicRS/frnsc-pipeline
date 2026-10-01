@@ -119,6 +119,10 @@ impl Catalog {
             ),
             CatalogEntry::parser("frnsc-sqlite", frnsc_sqlite::artifacts::parser::BrowserHistoryParserFactory::new()),
             CatalogEntry::parser("frnsc-sqlite", frnsc_sqlite::artifacts::firefox::FirefoxHistoryParserFactory::new()),
+            CatalogEntry::parser(
+                "frnsc-sqlite",
+                frnsc_sqlite::artifacts::activities_cache::ActivitiesCacheParserFactory::new(),
+            ),
             CatalogEntry::parser("frnsc-prefetch", frnsc_prefetch::parser::PrefetchParserFactory::new()),
             CatalogEntry::parser("frnsc-winevt", frnsc_winevt::EvtxParserFactory::new()),
             CatalogEntry::parser("frnsc-esedb", frnsc_esedb::srum::SrumParserFactory::new()),

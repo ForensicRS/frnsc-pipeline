@@ -110,18 +110,20 @@ fn rows_are_sorted_by_definition_name() {
 /// Roadmap phase 7 (2026-10-01): frnsc-sqlite's `browser.firefox_history` declares
 /// `FirefoxHistory`, a gap until now: 78 -> 79 parser, 4 -> 3 gap (79 + 3 + 654 = 736). Then
 /// frnsc-esedb's `windows.ual` declares `WindowsUserAccessLogging`: 79 -> 80 parser, 3 -> 2 gap
-/// (80 + 2 + 654 = 736). The two gaps left are the ActivitiesCache and scheduled tasks.
+/// (80 + 2 + 654 = 736). Then frnsc-sqlite's `windows.timeline` declares
+/// `WindowsActivitiesCacheDatabase`: 80 -> 81 parser, 2 -> 1 gap (81 + 1 + 654 = 736). The one
+/// gap left is scheduled tasks, whose definition spans two formats no crate reads yet.
 #[test]
 fn the_counts_are_pinned() {
     let report = report();
     let counts = report.counts();
     assert_eq!(
         counts.get(&Status::Parser),
-        Some(&80),
+        Some(&81),
         "{}",
         report.summary()
     );
-    assert_eq!(counts.get(&Status::Gap), Some(&2), "{}", report.summary());
+    assert_eq!(counts.get(&Status::Gap), Some(&1), "{}", report.summary());
     assert_eq!(
         counts.get(&Status::Unmapped),
         Some(&654),
@@ -188,7 +190,7 @@ fn the_parser_column_agrees_with_the_status() {
 #[test]
 fn coverage_is_inferred_until_the_parsers_declare_their_definitions() {
     let report = report();
-    assert_eq!(report.covering_counts().get("declared"), Some(&80));
+    assert_eq!(report.covering_counts().get("declared"), Some(&81));
     assert_eq!(report.covering_counts().get("inferred"), Some(&0));
     for row in report.rows.iter().filter(|r| r.status == Status::Parser) {
         assert_eq!(row.covering, Some(Covering::Declared), "{}", row.definition);
@@ -237,17 +239,18 @@ fn a_definition_names_the_crate_that_reads_its_format() {
             "frnsc-esedb",
             "windows.srum",
         ),
+        (
+            "WindowsActivitiesCacheDatabase",
+            "sqlite",
+            "frnsc-sqlite",
+            "windows.timeline",
+        ),
     ] {
         let r = row(definition);
         assert_eq!((r.format, r.reader), (format, reader), "{definition}");
         assert_eq!(r.parser, parser, "{definition}");
         assert_eq!(r.status, Status::Parser, "{definition}");
     }
-    // A gap still names the crate that would host the factory.
-    let (definition, format, reader) = ("WindowsActivitiesCacheDatabase", "sqlite", "frnsc-sqlite");
-    let r = row(definition);
-    assert_eq!((r.format, r.reader), (format, reader), "{definition}");
-    assert_eq!(r.status, Status::Gap, "{definition}");
     // Nothing reads a format we have no crate for, and nothing is guessed from a path.
     assert_eq!(row("WindowsSearchDatabaseFile").format, "-");
     // A definition spanning two container formats names neither. `WindowsScheduledTasks` is
@@ -306,7 +309,7 @@ fn an_inferred_row_is_marked_as_inferred_in_the_table() {
     assert!(evtx.contains("declared"), "{evtx}");
     assert!(!evtx.contains("inferred"), "{evtx}");
     // A gap is not marked either way.
-    let gap = line("WindowsActivitiesCacheDatabase");
+    let gap = line("WindowsScheduledTasks");
     assert!(!gap.contains("inferred"), "{gap}");
     assert!(!gap.contains("declared"), "{gap}");
 
@@ -380,7 +383,7 @@ fn the_table_carries_the_kb_commit_and_the_counts() {
         .to_table();
     assert!(table.contains(frnsc_artifacts::KB_COMMIT), "{table:.200}");
     assert!(
-        table.contains("736 definitions: 80 parser, 2 gap, 654 unmapped"),
+        table.contains("736 definitions: 81 parser, 1 gap, 654 unmapped"),
         "{}",
         table.lines().last().unwrap_or_default()
     );
