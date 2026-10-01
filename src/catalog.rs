@@ -95,6 +95,7 @@ impl Catalog {
         let entries = vec![
             // Parsers.
             CatalogEntry::parser("forensic-rs", ContainerInventoryParser::new()),
+            CatalogEntry::parser("forensic-rs", RegistryCollector::new()),
             CatalogEntry::parser("frnsc-ntfs", MftParserFactory::default()),
             CatalogEntry::parser("frnsc-ntfs", I30ParserFactory::default()),
             CatalogEntry::parser("frnsc-ntfs", UsnParserFactory::default()),

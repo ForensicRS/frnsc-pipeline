@@ -259,4 +259,25 @@ fn a_real_system_hive_is_read_through_hklm_and_current_control_set() {
         );
         assert_eq!(via_link, by_number, "{path}");
     }
+
+    // `Services` holds subkeys and no values: listing its values is empty, not an error (the
+    // reader used to dereference the unset values-list offset of every value-less key).
+    let services = registry
+        .key(r"HKLM\SYSTEM\CurrentControlSet\Services")
+        .unwrap()
+        .values()
+        .unwrap();
+    assert!(services.is_empty(), "{services:?}");
+    // `Select` has values and no subkeys: a child of it is not found, not a cell error (the
+    // reader used to follow its unset subkeys-list offset).
+    let missing = registry.key(r"HKLM\SYSTEM\Select\NoSuchKey").unwrap_err();
+    assert!(missing.is_registry_not_found(), "{missing:?}");
+    // Value names compare case-insensitively, as in Windows.
+    assert_eq!(
+        registry
+            .value(r"HKLM\SYSTEM\Select", "current")
+            .unwrap()
+            .as_dword(),
+        Some(current)
+    );
 }
