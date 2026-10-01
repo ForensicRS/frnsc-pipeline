@@ -104,21 +104,22 @@ fn rows_are_sorted_by_definition_name() {
 /// parsers declare `WindowsBackgroundActivityModeratorKeys`, `WindowsRunKeys`, `WindowsServices`
 /// and `WindowsAppCompatCache`, all four mapped and so far gaps (72 -> 76 parser, 8 -> 4 gap;
 /// 76 + 4 + 656 = 736). The four gaps left are Firefox history, the ActivitiesCache, UAL and
-/// scheduled tasks.
+/// scheduled tasks. Then the MountedDevices and WordWheelQuery parsers, whose definitions were
+/// unmapped: 76 -> 78 parser, 656 -> 654 unmapped (78 + 4 + 654 = 736).
 #[test]
 fn the_counts_are_pinned() {
     let report = report();
     let counts = report.counts();
     assert_eq!(
         counts.get(&Status::Parser),
-        Some(&76),
+        Some(&78),
         "{}",
         report.summary()
     );
     assert_eq!(counts.get(&Status::Gap), Some(&4), "{}", report.summary());
     assert_eq!(
         counts.get(&Status::Unmapped),
-        Some(&656),
+        Some(&654),
         "{}",
         report.summary()
     );
@@ -182,7 +183,7 @@ fn the_parser_column_agrees_with_the_status() {
 #[test]
 fn coverage_is_inferred_until_the_parsers_declare_their_definitions() {
     let report = report();
-    assert_eq!(report.covering_counts().get("declared"), Some(&76));
+    assert_eq!(report.covering_counts().get("declared"), Some(&78));
     assert_eq!(report.covering_counts().get("inferred"), Some(&0));
     for row in report.rows.iter().filter(|r| r.status == Status::Parser) {
         assert_eq!(row.covering, Some(Covering::Declared), "{}", row.definition);
@@ -372,7 +373,7 @@ fn the_table_carries_the_kb_commit_and_the_counts() {
         .to_table();
     assert!(table.contains(frnsc_artifacts::KB_COMMIT), "{table:.200}");
     assert!(
-        table.contains("736 definitions: 76 parser, 4 gap, 656 unmapped"),
+        table.contains("736 definitions: 78 parser, 4 gap, 654 unmapped"),
         "{}",
         table.lines().last().unwrap_or_default()
     );

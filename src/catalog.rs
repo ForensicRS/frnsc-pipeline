@@ -109,6 +109,14 @@ impl Catalog {
             CatalogEntry::parser("frnsc-winreg-activity", frnsc_winreg_activity::RunKeysParserFactory::new()),
             CatalogEntry::parser("frnsc-winreg-activity", frnsc_winreg_activity::ServicesParserFactory::new()),
             CatalogEntry::parser("frnsc-winreg-activity", frnsc_winreg_activity::ShimCacheParserFactory::new()),
+            CatalogEntry::parser(
+                "frnsc-winreg-activity",
+                frnsc_winreg_activity::MountedDevicesParserFactory::new(),
+            ),
+            CatalogEntry::parser(
+                "frnsc-winreg-activity",
+                frnsc_winreg_activity::WordWheelQueryParserFactory::new(),
+            ),
             CatalogEntry::parser("frnsc-sqlite", frnsc_sqlite::artifacts::parser::BrowserHistoryParserFactory::new()),
             CatalogEntry::parser("frnsc-prefetch", frnsc_prefetch::parser::PrefetchParserFactory::new()),
             CatalogEntry::parser("frnsc-winevt", frnsc_winevt::EvtxParserFactory::new()),
