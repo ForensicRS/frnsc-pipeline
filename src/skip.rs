@@ -318,17 +318,16 @@ mod tests {
     /// "every OS-applicable source is a registry source" would wrongly decline this with no
     /// registry attached, even though the filesystem path could still resolve it.
     #[test]
-    fn artifact_absent_still_reachable_with_no_registry_for_a_mixed_file_and_registry_definition()
-    {
+    fn artifact_absent_still_reachable_with_no_registry_for_a_mixed_file_and_registry_definition() {
         let sources = TriageSources::builder()
             .vfs(Arc::new(InMemoryVirtualFileSystem::new()))
             .catalog(frnsc_artifacts::catalog())
             .build();
         assert!(sources.registry().is_none());
-        let descriptor = ParserDescriptor::new("test.parser", "Test", "", "1.0")
-            .with_requirements(vec![Requirement::artifact(
-                "WindowsEnvironmentVariableProgramFiles",
-            )]);
+        let descriptor =
+            ParserDescriptor::new("test.parser", "Test", "", "1.0").with_requirements(vec![
+                Requirement::artifact("WindowsEnvironmentVariableProgramFiles"),
+            ]);
         let (reason, detail) = classify(&descriptor, &sources);
         assert_eq!(reason, SkipReason::ArtifactAbsent, "{detail}");
     }
