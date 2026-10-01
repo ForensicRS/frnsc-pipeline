@@ -214,3 +214,49 @@ fn every_parser_is_ready_on_real_samples() {
         assert_eq!(p.check("coverage").unwrap().outcome, Outcome::Pass, "{id}");
     }
 }
+
+/// A real SYSTEM hive is reachable the way Windows and the ForensicArtifacts KB spell its paths:
+/// under `HKLM\SYSTEM` in any case, with `CurrentControlSet` resolved through `Select\Current`
+/// (an offline hive has no such key). Every SYSTEM-hive read failed before frnsc-hive stripped
+/// the hive name for SYSTEM as it already did for SOFTWARE.
+#[test]
+fn a_real_system_hive_is_read_through_hklm_and_current_control_set() {
+    use forensic_rs::prelude::{RegistryExt, StdVirtualFS};
+    let system = artifact_or_skip!("hive-system-plaso");
+    let tmp = TempDir::new("system-hive");
+    let c = tmp.path().join("C");
+    place(&c, "Windows/System32/Config/SYSTEM", &system);
+    let fs: std::sync::Arc<dyn forensic_rs::prelude::FileSystem> =
+        std::sync::Arc::new(forensic_rs::prelude::ChRootFileSystem::new(
+            c.to_str().unwrap(),
+            std::sync::Arc::new(StdVirtualFS::new()),
+        ));
+    let (registry, _) = evidence::registry_from(&fs);
+    let registry = registry.expect("the SYSTEM hive loads");
+
+    let current = registry
+        .value(r"HKLM\SYSTEM\Select", "Current")
+        .unwrap()
+        .as_dword()
+        .unwrap();
+    let control_set = format!(r"HKLM\SYSTEM\ControlSet{current:03}\Services");
+    let names = |entries: Vec<forensic_rs::traits::registry::KeyEntry>| -> Vec<String> {
+        entries.into_iter().map(|e| e.name).collect()
+    };
+    let by_number = names(registry.key(&control_set).unwrap().keys().unwrap());
+    assert!(!by_number.is_empty());
+    for path in [
+        r"HKLM\SYSTEM\CurrentControlSet\Services",
+        r"HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services",
+        r"hklm\system\currentcontrolset\services",
+    ] {
+        let via_link = names(
+            registry
+                .key(path)
+                .unwrap_or_else(|e| panic!("{path}: {e}"))
+                .keys()
+                .unwrap(),
+        );
+        assert_eq!(via_link, by_number, "{path}");
+    }
+}
