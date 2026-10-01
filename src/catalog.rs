@@ -122,6 +122,7 @@ impl Catalog {
             CatalogEntry::parser("frnsc-prefetch", frnsc_prefetch::parser::PrefetchParserFactory::new()),
             CatalogEntry::parser("frnsc-winevt", frnsc_winevt::EvtxParserFactory::new()),
             CatalogEntry::parser("frnsc-esedb", frnsc_esedb::srum::SrumParserFactory::new()),
+            CatalogEntry::parser("frnsc-esedb", frnsc_esedb::ual::UalParserFactory::new()),
             CatalogEntry::parser("frnsc-linux", frnsc_linux::unix::utmp::UtmpParserFactory::new()),
             CatalogEntry::parser("frnsc-linux", frnsc_linux::log::syslog::SyslogParserFactory::new()),
             CatalogEntry::parser("frnsc-linux", frnsc_linux::log::audit::AuditParserFactory::new()),

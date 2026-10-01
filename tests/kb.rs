@@ -108,18 +108,20 @@ fn rows_are_sorted_by_definition_name() {
 /// unmapped: 76 -> 78 parser, 656 -> 654 unmapped (78 + 4 + 654 = 736).
 ///
 /// Roadmap phase 7 (2026-10-01): frnsc-sqlite's `browser.firefox_history` declares
-/// `FirefoxHistory`, a gap until now: 78 -> 79 parser, 4 -> 3 gap (79 + 3 + 654 = 736).
+/// `FirefoxHistory`, a gap until now: 78 -> 79 parser, 4 -> 3 gap (79 + 3 + 654 = 736). Then
+/// frnsc-esedb's `windows.ual` declares `WindowsUserAccessLogging`: 79 -> 80 parser, 3 -> 2 gap
+/// (80 + 2 + 654 = 736). The two gaps left are the ActivitiesCache and scheduled tasks.
 #[test]
 fn the_counts_are_pinned() {
     let report = report();
     let counts = report.counts();
     assert_eq!(
         counts.get(&Status::Parser),
-        Some(&79),
+        Some(&80),
         "{}",
         report.summary()
     );
-    assert_eq!(counts.get(&Status::Gap), Some(&3), "{}", report.summary());
+    assert_eq!(counts.get(&Status::Gap), Some(&2), "{}", report.summary());
     assert_eq!(
         counts.get(&Status::Unmapped),
         Some(&654),
@@ -186,7 +188,7 @@ fn the_parser_column_agrees_with_the_status() {
 #[test]
 fn coverage_is_inferred_until_the_parsers_declare_their_definitions() {
     let report = report();
-    assert_eq!(report.covering_counts().get("declared"), Some(&79));
+    assert_eq!(report.covering_counts().get("declared"), Some(&80));
     assert_eq!(report.covering_counts().get("inferred"), Some(&0));
     for row in report.rows.iter().filter(|r| r.status == Status::Parser) {
         assert_eq!(row.covering, Some(Covering::Declared), "{}", row.definition);
@@ -378,7 +380,7 @@ fn the_table_carries_the_kb_commit_and_the_counts() {
         .to_table();
     assert!(table.contains(frnsc_artifacts::KB_COMMIT), "{table:.200}");
     assert!(
-        table.contains("736 definitions: 79 parser, 3 gap, 654 unmapped"),
+        table.contains("736 definitions: 80 parser, 2 gap, 654 unmapped"),
         "{}",
         table.lines().last().unwrap_or_default()
     );

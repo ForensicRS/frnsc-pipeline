@@ -331,3 +331,72 @@ fn a_real_firefox_places_database_reads_whole() {
     assert_eq!(visits[0].visit_type, Some(2));
     assert!(read_downloads(&db).unwrap().is_empty());
 }
+
+/// plaso's real User Access Logging pair (a Server 2019 DC, 2022): the clients' users, last
+/// accesses and per-day counts read, which the ESE reader lost before it followed the real record
+/// layout, and every date is a FILETIME, not the 1899 OLE reading of its bytes.
+#[test]
+fn a_real_ual_pair_reads_users_days_and_filetime_dates() {
+    use forensic_rs::prelude::*;
+    use forensic_rs::utils::testing::{collect_run, InMemoryVirtualFileSystem};
+    let identity = artifact_or_skip!("esedb-ual-systemidentity");
+    let clients = artifact_or_skip!("esedb-ual-guid");
+    let fs = InMemoryVirtualFileSystem::new()
+        .with_file(
+            "Windows/System32/LogFiles/Sum/SystemIdentity.mdb",
+            std::fs::read(identity).unwrap(),
+        )
+        .with_file(
+            "Windows/System32/LogFiles/Sum/{C519A76A-D9B5-4F85-B667-5FAC08E0E1B4}.mdb",
+            std::fs::read(clients).unwrap(),
+        );
+    let sources = TriageSources::builder()
+        .vfs(std::sync::Arc::new(fs))
+        .acquisition(Acquisition::ImageRead)
+        .build();
+    let triage = TriageContext::new("DC-1", "t");
+    let cancellation = CancellationToken::new();
+    let ctx = ParseContext::new(&sources, &triage, &cancellation);
+    let items = collect_run(
+        frnsc_esedb::ual::UalParserFactory::new()
+            .open(&ctx)
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(items.iter().all(Result::is_ok));
+    let records: Vec<&ForensicData> = items.iter().filter_map(|i| i.as_ref().ok()).collect();
+    let clients: Vec<&&ForensicData> = records
+        .iter()
+        .filter(|r| r.field_as_str("ual.table") == Some("CLIENTS"))
+        .collect();
+    assert_eq!(clients.len(), 14);
+    // Every client has a user, a last access and its per-day counts.
+    assert!(clients
+        .iter()
+        .all(|c| c.field("ual.last_access").is_some() && c.field("ual.daily_accesses").is_some()));
+    let mut users: Vec<&str> = clients
+        .iter()
+        .map(|c| c.field_as_str("user.name").unwrap())
+        .collect();
+    users.sort_unstable();
+    users.dedup();
+    assert_eq!(users, [r"ual\dc-1$", r"ual\hunter", r"ual\xtof-wks$"]);
+    let first = clients
+        .iter()
+        .find(|c| c.field_as_str("source.address") == Some("::1"))
+        .unwrap();
+    assert_eq!(first.field_as_u64("ual.total_accesses"), Some(62));
+    assert_eq!(
+        first.field("ual.daily_accesses"),
+        Some(&Field::Array(vec![Text::Borrowed("197:62")]))
+    );
+    assert_eq!(
+        first.field_as_str("ual.role_name"),
+        Some("Active Directory Domain Services")
+    );
+    for r in &records {
+        if let Some(ts) = r.field_as_date("@timestamp") {
+            assert_eq!(ts.year(), 2022, "{r:?}");
+        }
+    }
+}
