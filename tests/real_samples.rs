@@ -425,3 +425,52 @@ fn a_real_srum_database_has_no_null_filler_values() {
     assert_eq!(srum.index.app.len(), 2222);
     assert_eq!(srum.index.user.len(), 3671);
 }
+
+/// The real WebCacheV01.dat (32 KiB pages, format revision 0x14). On large pages a value's tag
+/// flags are the top bits of its first word and every tagged value starts with a flags byte; the
+/// reader took both for data, so the catalog read as empty and the database had no tables. An
+/// empty table's root page (only its header tag) counted as unparsable.
+#[test]
+fn a_real_webcache_database_reads_its_tables_and_values() {
+    let path = artifact_or_skip!("esedb-webcache-cookies");
+    let db = frnsc_esedb::EseDb::open(&path).unwrap();
+    assert_eq!(db.table_names().len(), 33);
+    for name in db.table_names() {
+        let table = db.table(name).unwrap();
+        let mut rows = table.iter_rows();
+        for _ in &mut rows {}
+        let stats = rows.stats();
+        assert_eq!(
+            (
+                stats.pages_unreadable,
+                stats.pages_invalid,
+                stats.pages_unparsable
+            ),
+            (0, 0, 0),
+            "{name}"
+        );
+    }
+    let containers: Vec<_> = db.table("Containers").unwrap().iter_rows().collect();
+    assert_eq!(containers.len(), 18);
+    let history = containers
+        .iter()
+        .find(|r| r.get_str("Name").as_deref() == Some("History"))
+        .unwrap();
+    assert_eq!(
+        history.get_str("Directory").as_deref(),
+        Some(r"C:\Users\factdevteam\AppData\Local\Microsoft\Windows\History\History.IE5\"),
+        "tagged text without its flags byte"
+    );
+    let urls: Vec<String> = db
+        .table("Container_13")
+        .unwrap()
+        .iter_rows()
+        .filter_map(|r| r.get_str("Url"))
+        .collect();
+    assert_eq!(urls.len(), 4182);
+    assert!(
+        urls.iter().all(|u| u.starts_with("ieflipahead:")),
+        "{:?}",
+        &urls[..3]
+    );
+}
