@@ -81,20 +81,27 @@ fn rows_are_sorted_by_definition_name() {
 /// FOR-30 (2026-09-30) moves one more definition from unmapped to parser, `Declared`:
 /// `journal::parser::JournalParserFactory` declares `LinuxSystemdJournalLogs`, now mapped to
 /// `Artifact::Linux(LinuxArtifacts::Journal)`. `Gap` is unchanged, for the same reason as above.
+///
+/// FOR-33 (2026-10-01) moves 5 more definitions from unmapped to parser, `Declared`:
+/// `containers::ContainersParserFactory` declares `DockerContainerConfig`,
+/// `DockerContainerHostConfig`, `GKEDockerContainerLogs`, `KubernetesContainerLogSymlinks` and
+/// `KubernetesKubeletPodLogs`. None of the five has an `output_artifact` mapping (no
+/// `LinuxArtifacts` variant fits container logs yet — a public `forensic-rs` API shape change,
+/// out of scope here), so `Gap` is unchanged and the five move straight from `Unmapped`.
 #[test]
 fn the_counts_are_pinned() {
     let report = report();
     let counts = report.counts();
     assert_eq!(
         counts.get(&Status::Parser),
-        Some(&66),
+        Some(&71),
         "{}",
         report.summary()
     );
     assert_eq!(counts.get(&Status::Gap), Some(&7), "{}", report.summary());
     assert_eq!(
         counts.get(&Status::Unmapped),
-        Some(&661),
+        Some(&656),
         "{}",
         report.summary()
     );
@@ -154,13 +161,13 @@ fn the_parser_column_agrees_with_the_status() {
 /// removal visible. FOR-5's `windows.evtx`/`windows.srum`, FOR-28's `linux.utmp`, the text-log/
 /// shell/package family (`linux.syslog`, `linux.audit`, `linux.shell_history`,
 /// `linux.packages`), FOR-32's config/state family (`linux.accounts`, `linux.ssh`,
-/// `linux.schedule`, `linux.units`, `linux.identity`) and FOR-30's `linux.journal` are the parsers
-/// that declare their definitions outright, so their rows are the exception: `Declared`, not
-/// `Inferred`.
+/// `linux.schedule`, `linux.units`, `linux.identity`), FOR-30's `linux.journal` and FOR-33's
+/// `linux.containers` are the parsers that declare their definitions outright, so their rows are
+/// the exception: `Declared`, not `Inferred`.
 #[test]
 fn coverage_is_inferred_until_the_parsers_declare_their_definitions() {
     let report = report();
-    assert_eq!(report.covering_counts().get("declared"), Some(&59));
+    assert_eq!(report.covering_counts().get("declared"), Some(&64));
     assert_eq!(report.covering_counts().get("inferred"), Some(&7));
     let declared: Vec<&str> = frnsc_winevt::parser::DEFINITIONS
         .iter()
@@ -177,6 +184,7 @@ fn coverage_is_inferred_until_the_parsers_declare_their_definitions() {
         .chain(frnsc_linux::units::DEFINITIONS.iter().copied())
         .chain(frnsc_linux::identity::DEFINITIONS.iter().copied())
         .chain(frnsc_linux::journal::parser::DEFINITIONS.iter().copied())
+        .chain(frnsc_linux::containers::DEFINITIONS.iter().copied())
         .collect();
     for row in report.rows.iter().filter(|r| r.status == Status::Parser) {
         let expected = if declared.contains(&row.definition.as_str()) {
@@ -350,7 +358,7 @@ fn the_table_carries_the_kb_commit_and_the_counts() {
         .to_table();
     assert!(table.contains(frnsc_artifacts::KB_COMMIT), "{table:.200}");
     assert!(
-        table.contains("734 definitions: 66 parser, 7 gap, 661 unmapped"),
+        table.contains("734 definitions: 71 parser, 7 gap, 656 unmapped"),
         "{}",
         table.lines().last().unwrap_or_default()
     );
