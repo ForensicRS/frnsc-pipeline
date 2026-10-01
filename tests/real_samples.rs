@@ -400,3 +400,28 @@ fn a_real_ual_pair_reads_users_days_and_filetime_dates() {
         }
     }
 }
+
+/// The real SRUDB.dat: NULL fixed columns are absent, never ESE's 0x2A filler read as a value
+/// (the reader ignored the null bitmap, and App Timeline reported 0x2A2A2A2A2A2A2A2A as
+/// in-focus time), and the id map still resolves every identity.
+#[test]
+fn a_real_srum_database_has_no_null_filler_values() {
+    let path = artifact_or_skip!("esedb-srudb");
+    let db = frnsc_esedb::EseDb::open(&path).unwrap();
+    let timeline = db.table("{5C8CF1C7-7257-4F13-B223-970EF5939312}").unwrap();
+    let filler = [0x2A2A_2A2A_2A2A_2A2A_i64, 0x2A2A_2A2A];
+    let mut values = 0;
+    for row in timeline.iter_rows() {
+        for (_, value) in row.iter() {
+            if let Some(v) = value.as_i64() {
+                values += 1;
+                assert!(!filler.contains(&v), "NULL filler read as a value: {v:#x}");
+            }
+        }
+    }
+    assert!(values > 0);
+    let srum =
+        frnsc_esedb::srum::SrumDatabase::from_db(frnsc_esedb::EseDb::open(&path).unwrap()).unwrap();
+    assert_eq!(srum.index.app.len(), 2222);
+    assert_eq!(srum.index.user.len(), 3671);
+}
