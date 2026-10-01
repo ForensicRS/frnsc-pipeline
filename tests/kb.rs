@@ -88,13 +88,19 @@ fn rows_are_sorted_by_definition_name() {
 /// `KubernetesKubeletPodLogs`. None of the five has an `output_artifact` mapping (no
 /// `LinuxArtifacts` variant fits container logs yet — a public `forensic-rs` API shape change,
 /// out of scope here), so `Gap` is unchanged and the five move straight from `Unmapped`.
+///
+/// Roadmap phase 4 (2026-10-01) adds 2 definitions and moves none between statuses. The KB
+/// regeneration (`frnsc-artifacts` @ `86799d2`) adds the local `BraveBrowserHistoryDatabaseFile`
+/// and `VivaldiBrowserHistoryDatabaseFile`, both mapped to `BrowserHistory` and declared by
+/// `frnsc_sqlite`'s `BrowserHistoryParserFactory`, so both land as `Parser` (71 -> 73, 734 ->
+/// 736). `Gap` and `Unmapped` are unchanged.
 #[test]
 fn the_counts_are_pinned() {
     let report = report();
     let counts = report.counts();
     assert_eq!(
         counts.get(&Status::Parser),
-        Some(&71),
+        Some(&73),
         "{}",
         report.summary()
     );
@@ -105,14 +111,15 @@ fn the_counts_are_pinned() {
         "{}",
         report.summary()
     );
-    // 385 definitions name Windows, plus the 3 that name no OS at all, which means every OS.
+    // 387 definitions name Windows (385 upstream, plus the local Brave and Vivaldi ones), plus
+    // the 3 that name no OS at all, which means every OS.
     assert_eq!(
         report
             .rows
             .iter()
             .filter(|r| r.supports(Os::Windows))
             .count(),
-        388
+        390
     );
 }
 
@@ -163,12 +170,14 @@ fn the_parser_column_agrees_with_the_status() {
 /// `linux.packages`), FOR-32's config/state family (`linux.accounts`, `linux.ssh`,
 /// `linux.schedule`, `linux.units`, `linux.identity`), FOR-30's `linux.journal` and FOR-33's
 /// `linux.containers` are the parsers that declare their definitions outright, so their rows are
-/// the exception: `Declared`, not `Inferred`.
+/// the exception: `Declared`, not `Inferred`. Roadmap phase 4 adds `windows.prefetch`,
+/// `windows.amcache` and `windows.browser_history` (64 -> 69 declared: their three existing
+/// definitions move from inferred, plus the two new local browser definitions; 7 -> 4 inferred).
 #[test]
 fn coverage_is_inferred_until_the_parsers_declare_their_definitions() {
     let report = report();
-    assert_eq!(report.covering_counts().get("declared"), Some(&64));
-    assert_eq!(report.covering_counts().get("inferred"), Some(&7));
+    assert_eq!(report.covering_counts().get("declared"), Some(&69));
+    assert_eq!(report.covering_counts().get("inferred"), Some(&4));
     let declared: Vec<&str> = frnsc_winevt::parser::DEFINITIONS
         .iter()
         .copied()
@@ -185,6 +194,11 @@ fn coverage_is_inferred_until_the_parsers_declare_their_definitions() {
         .chain(frnsc_linux::identity::DEFINITIONS.iter().copied())
         .chain(frnsc_linux::journal::parser::DEFINITIONS.iter().copied())
         .chain(frnsc_linux::containers::DEFINITIONS.iter().copied())
+        .chain([
+            frnsc_prefetch::parser::DEFINITION,
+            frnsc_amcache::parser::DEFINITION,
+        ])
+        .chain(frnsc_sqlite::artifacts::parser::DEFINITIONS.iter().copied())
         .collect();
     for row in report.rows.iter().filter(|r| r.status == Status::Parser) {
         let expected = if declared.contains(&row.definition.as_str()) {
@@ -358,7 +372,7 @@ fn the_table_carries_the_kb_commit_and_the_counts() {
         .to_table();
     assert!(table.contains(frnsc_artifacts::KB_COMMIT), "{table:.200}");
     assert!(
-        table.contains("734 definitions: 71 parser, 7 gap, 656 unmapped"),
+        table.contains("736 definitions: 73 parser, 7 gap, 656 unmapped"),
         "{}",
         table.lines().last().unwrap_or_default()
     );
