@@ -1,0 +1,91 @@
+# Builds this crate on its own against the ForensicRS 0.14 development branches on GitHub.
+name: Rust
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  FORENSIC_TESTDATA_DIR: ${{ github.workspace }}/.testdata
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy, rustfmt
+
+    - name: Use the ForensicRS development branches
+      # forensic-rs 0.14 and its sibling crates are not on crates.io yet. Developers patch them
+      # to their local checkouts in this same (gitignored) file; CI patches them to GitHub.
+      run: |
+        mkdir -p .cargo
+        cat > .cargo/config.toml <<'EOF'
+        [patch.crates-io]
+        forensic-rs = { git = "https://github.com/ForensicRS/forensic-rs", branch = "v14" }
+        frnsc-amcache = { git = "https://github.com/ForensicRS/frnsc-amcache", branch = "V14" }
+        frnsc-artifacts = { git = "https://github.com/ForensicRS/frnsc-artifacts", branch = "main" }
+        frnsc-esedb = { git = "https://github.com/ForensicRS/frnsc-esedb", branch = "main" }
+        frnsc-hive = { git = "https://github.com/ForensicRS/frnsc-hive", branch = "V14" }
+        frnsc-linux = { git = "https://github.com/ForensicRS/frnsc-linux", branch = "main" }
+        frnsc-ntfs = { git = "https://github.com/ForensicRS/frnsc-ntfs", branch = "main" }
+        frnsc-ole = { git = "https://github.com/ForensicRS/frnsc-ole", branch = "master" }
+        frnsc-prefetch = { git = "https://github.com/ForensicRS/frnsc-prefetch", branch = "V14" }
+        frnsc-sqlite = { git = "https://github.com/ForensicRS/frnsc-sqlite", branch = "V14" }
+        frnsc-vsys = { git = "https://github.com/ForensicRS/frnsc-vsys", branch = "main" }
+        frnsc-winevt = { git = "https://github.com/ForensicRS/frnsc-winevt", branch = "master" }
+        frnsc-winreg-activity = { git = "https://github.com/ForensicRS/frnsc-taskbar", branch = "V14" }
+        EOF
+
+    - uses: Swatinem/rust-cache@v2
+
+    - name: Check out the test corpus
+      uses: actions/checkout@v4
+      with:
+        repository: ForensicRS/forensic-testenv
+        path: .forensic-testenv
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - uses: actions/cache@v4
+      with:
+        path: .testdata
+        key: testdata-${{ hashFiles('.forensic-testenv/manifest/artifacts.toml') }}
+        restore-keys: testdata-
+
+    - name: Fetch test artifacts
+      # A sample that is not on the Hugging Face mirror yet fails to download, and its tests
+      # skip. Once every sample this crate uses is published, drop continue-on-error and set
+      # FORENSIC_TESTDATA_STRICT=1 so a missing sample fails the build.
+      continue-on-error: true
+      run: python .forensic-testenv/tools/fetch.py --crate frnsc-pipeline
+
+    - name: Format
+      run: cargo fmt --check
+
+    - name: Clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+
+    - name: Test
+      run: cargo test --all-targets --all-features
+
+    - name: Doc tests
+      run: cargo test --doc --all-features
+
+    - name: Docs
+      run: cargo doc --no-deps --all-features
