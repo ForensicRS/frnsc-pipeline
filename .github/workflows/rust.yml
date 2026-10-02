@@ -47,7 +47,7 @@ jobs:
         frnsc-sqlite = { git = "https://github.com/ForensicRS/frnsc-sqlite", branch = "V14" }
         frnsc-vsys = { git = "https://github.com/ForensicRS/frnsc-vsys", branch = "main" }
         frnsc-winevt = { git = "https://github.com/ForensicRS/frnsc-winevt", branch = "master" }
-        frnsc-winreg-activity = { git = "https://github.com/ForensicRS/frnsc-taskbar", branch = "V14" }
+        frnsc-winreg-activity = { git = "https://github.com/ForensicRS/frnsc-winreg-activity", branch = "V14" }
         EOF
 
     - uses: Swatinem/rust-cache@v2
